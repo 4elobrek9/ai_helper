@@ -10,7 +10,6 @@ import easyocr
 import pyttsx3
 import wave
 import mss
-import struct
 from collections import deque
 
 # Настройки
