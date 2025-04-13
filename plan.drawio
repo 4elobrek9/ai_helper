@@ -1,6 +1,6 @@
 <mxfile host="65bd71144e">
     <diagram id="_ziez3vmtBqY_y2Buj5E" name="Page-1">
-        <mxGraphModel dx="2134" dy="1686" grid="1" gridSize="11" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+        <mxGraphModel dx="2010" dy="2052" grid="1" gridSize="11" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -55,6 +55,9 @@
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="43" style="edgeStyle=none;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="11" target="42">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="60" style="edgeStyle=none;html=1;" edge="1" parent="1" source="11" target="59">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="11" value="(Комадна) OCR" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
@@ -152,6 +155,15 @@
                 </mxCell>
                 <mxCell id="57" value="тайм аут 3-5 секунд или пока пиксели не начнут активно на экране двигаться" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
                     <mxGeometry x="260" y="682" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="62" style="edgeStyle=none;html=1;" edge="1" parent="1" source="59" target="61">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="59" value="перевести содержимое на экране" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="44" y="371.5" width="120" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="61" value="сделать типо скриншот и всё что написано на английском перевести и сказать" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="-126" y="520" width="120" height="96" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>
