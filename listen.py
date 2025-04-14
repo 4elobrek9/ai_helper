@@ -4,6 +4,8 @@ import logging
 import pygame
 import speech_recognition as sr
 from command_OCR import move_to_text, click_to_text
+from command import *
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,8 +27,8 @@ class AudioManager:
     def load_sounds(self):
         try:
             self.sounds = {
-                'listening': pygame.mixer.Sound('Слушаю.wav'),
-                'executing': pygame.mixer.Sound('Выполняю.wav'),
+                'listening': pygame.mixer.Sound('nerd_lst.mp3'),
+                'executing': pygame.mixer.Sound('conf.mp3'),
                 'waiting': pygame.mixer.Sound('Простите_за_ожидание.wav'),
                 'error': pygame.mixer.Sound('error_sound.wav')
             }
@@ -99,7 +101,7 @@ class VoiceAssistant:
             if self.command_mode:
                 self._handle_command(text)
                 self.command_mode = False
-            elif any(w in text for w in {"окей", "хей", "люми", "lumi", "lumia"}):
+            elif any(w in text for w in {"окей", "хей", "люми", "lumi", "lumia", "lu", "лю"}):
                 self._activate_command_mode()
 
         except sr.UnknownValueError:
@@ -117,7 +119,8 @@ class VoiceAssistant:
         self.audio.command_start_time = time.time()
         command_actions = {
             "наведи на": self._handle_move,
-            "нажми на": self._handle_click
+            "нажми на": self._handle_click,
+            "погода": self._weather
         }
 
         for phrase, action in command_actions.items():
@@ -142,6 +145,28 @@ class VoiceAssistant:
     def _handle_click(self, text):
         target = text.split("нажми на")[-1].strip()
         if not click_to_text(target, clicks=2):
+            self.audio.play_sound('error')
+    def _weather(self, text=None):
+        try:
+            from command import get_weather
+            weather = get_weather()
+            
+            if not weather:
+                self.audio.play_sound('error')
+                return
+                
+            temp_text = weather['temp'].replace('−', 'минус ')
+            message = (
+                f"Сейчас в {weather['city']} {temp_text}. "
+                f"{weather['weather'].capitalize()}."
+            )
+            
+            engine = pyttsx3.init()
+            engine.say("Обновляю данные о погоде... " + message)
+            engine.runAndWait()
+            
+        except Exception as e:
+            logger.error(f"Ошибка погоды: {str(e)}")
             self.audio.play_sound('error')
 
 if __name__ == "__main__":
