@@ -1,173 +1,240 @@
-import sys
-import time
-import logging
-import pygame
+import os
+import pvporcupine
+import pyaudio
 import speech_recognition as sr
+import threading
+import time
+import numpy as np
+import requests
+import pygame
+import logging
+from sintez import speak
 from command_OCR import move_to_text, click_to_text
-from command import *
+from command import get_weather
 
-
+# Настройка логгера
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler('voice_assistant.log'), logging.StreamHandler()]
+    handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('VoiceAI')
 
-class AudioManager:
-    def __init__(self):
-        pygame.mixer.init()
-        self.recognizer = sr.Recognizer()
-        self.mic = sr.Microphone()
-        self.source = None
-        self._init_microphone()
-        self.load_sounds()
-        self.command_start_time = 0
-
-    def load_sounds(self):
-        try:
-            self.sounds = {
-                'listening': pygame.mixer.Sound('nerd_lst.mp3'),
-                'executing': pygame.mixer.Sound('conf.mp3'),
-                'waiting': pygame.mixer.Sound('Простите_за_ожидание.wav'),
-                'error': pygame.mixer.Sound('error_sound.wav')
-            }
-        except Exception as e:
-            logger.error(f"Ошибка загрузки звуков: {str(e)}")
-            self.sounds = None
-
-    def play_sound(self, name):
-        if self.sounds and name in self.sounds:
-            self.sounds[name].play()
-
-    def _init_microphone(self):
-        try:
-            self.source = self.mic.__enter__()
-            self.recognizer.adjust_for_ambient_noise(self.source, duration=1)
-            self.recognizer.pause_threshold = 0.6
-            self.recognizer.non_speaking_duration = 0.3
-            logger.info("Микрофон инициализирован")
-        except Exception as e:
-            logger.error(f"Ошибка микрофона: {str(e)}")
-            raise
-
-    def __del__(self):
-        if self.mic and self.source:
-            self.mic.__exit__(None, None, None)
-
-    def extended_listen(self):
-        try:
-            return self.recognizer.listen(
-                self.source,
-                timeout=3,
-                phrase_time_limit=6
-            )
-        except Exception as e:
-            logger.debug(f"Аудио ошибка: {str(e)}")
-            return None
+def ask_ollama(question: str) -> str:
+    """Функция запроса к локальной нейросети"""
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "llama3",
+                "prompt": f"[INST] Ответь развернуто на русском (говори от женского рода милой доброй девушки, говори от лица человека, обращайся конкретно к пользователю и т.д.) вопрос: {question} [/INST]",
+                "stream": False,
+                "options": {"temperature": 0.7}
+            },
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            raise ConnectionError(f"HTTP {response.status_code}: {response.text}")
+        
+        result = response.json()
+        response_text = result.get("response", "").split("[/INST]")[-1].strip()
+        print(f"\n[Нейросеть] Ответ: {response_text}")
+        return response_text
+    except Exception as e:
+        logger.error(f"Ошибка запроса к Ollama: {e}")
+        return "Не удалось получить ответ от нейросети"
 
 class VoiceAssistant:
     def __init__(self):
-        self.audio = AudioManager()
-        self.running = True
-        self.command_mode = False
-
-    def start(self):
-        logger.info("Запуск ассистента...")
-        try:
-            while self.running:
-                self._process_audio()
-        except KeyboardInterrupt:
-            self.stop()
-        except Exception as e:
-            logger.error(f"Критическая ошибка: {str(e)}")
-            self.stop()
-
-    def stop(self):
-        logger.info("Завершение работы...")
-        self.running = False
-        sys.exit(0)
-
-    def _process_audio(self):
-        audio = self.audio.extended_listen()
-        if not audio:
-            time.sleep(0.1)
-            return
-
-        try:
-            text = self.audio.recognizer.recognize_google(audio, language="ru-RU").lower()
-            logger.info(f"Распознано: {text}")
-
-            if self.command_mode:
-                self._handle_command(text)
-                self.command_mode = False
-            elif any(w in text for w in {"окей", "хей", "люми", "lumi", "lumia", "lu", "лю"}):
-                self._activate_command_mode()
-
-        except sr.UnknownValueError:
-            pass
-        except Exception as e:
-            logger.error(f"Ошибка обработки: {str(e)}")
-
-    def _activate_command_mode(self):
-        logger.info("Режим команд активирован")
-        self.command_mode = True
-        self.audio.play_sound('listening')  # "Слушаю"
-        time.sleep(0.3)
-
-    def _handle_command(self, text):
-        self.audio.command_start_time = time.time()
-        command_actions = {
-            "наведи на": self._handle_move,
-            "нажми на": self._handle_click,
-            "погода": self._weather
+        # Инициализация звука
+        pygame.mixer.init()
+        self.sounds = {
+            'start': pygame.mixer.Sound('./audio/right.mp3'),
+            'confirm': pygame.mixer.Sound('./audio/right.mp3'),
+            'error': pygame.mixer.Sound('./audio/lie.mp3')
         }
 
-        for phrase, action in command_actions.items():
-            if phrase in text:
-                self._check_delay()
-                action(text)
-                self.audio.play_sound('executing')  # "Выполняю"
-                return
+        # Инициализация аудио
+        self.pyaudio = pyaudio.PyAudio()
+        self.recognizer = sr.Recognizer()
+        self.recognizer.pause_threshold = 0.8
+        self.recognizer.energy_threshold = 400
+        
+        # Инициализация Picovoice
+        self.porcupine = pvporcupine.create(
+            access_key='eav8QQvpt4NZ8cpyP+51KxTso4LxSXMWzsCqPGHrRUASriXhqAKfLA==',
+            keyword_paths=['models/lumia.ppn']
+        )
+        
+        self.audio_stream = self.pyaudio.open(
+            rate=self.porcupine.sample_rate,
+            channels=1,
+            format=pyaudio.paInt16,
+            input=True,
+            frames_per_buffer=self.porcupine.frame_length
+        )
 
-        logger.warning("Неизвестная команда")
-        self.audio.play_sound('error')
+        # Команды
+        self.command_actions = {
+            "наведи на": self._handle_move,
+            "нажми на": self._handle_click,
+            "кликни на": self._handle_click,
+            "клик по": self._handle_click,
+            "погода": self._weather,
+            "стоп": self.stop,
+            "выход": self.stop
+        }
 
-    def _check_delay(self):
-        if time.time() - self.audio.command_start_time > 5:
-            self.audio.play_sound('waiting')  # "Простите за ожидание"
+        # Флаги и настройки
+        self.is_listening = False
+        self.is_running = True
+        self.command_timeout = 15  # Таймаут прослушивания команд
+        self.last_activity = 0
+        self.microphone = sr.Microphone()
+
+    def start(self):
+        """Запуск ассистента"""
+        logger.info("🚀 Ассистент запущен!")
+        speak("Система готова к работе")
+
+        # Калибровка микрофона
+        with self.microphone as source:
+            self.recognizer.adjust_for_ambient_noise(source)
+
+        # Поток для wake word
+        threading.Thread(target=self._detect_wakeword, daemon=True).start()
+        
+        # Поток для команд
+        threading.Thread(target=self._listen_commands, daemon=True).start()
+
+        try:
+            while self.is_running:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            self.stop()
+
+    def _detect_wakeword(self):
+        """Обнаружение активационной фразы"""
+        while self.is_running:
+            try:
+                pcm = self.audio_stream.read(
+                    self.porcupine.frame_length, 
+                    exception_on_overflow=False
+                )
+                pcm = np.frombuffer(pcm, dtype=np.int16)
+                if self.porcupine.process(pcm) >= 0:
+                    logger.info("🔊 Wake word активирована!")
+                    speak("Слушаю вас")
+                    self.is_listening = True
+                    self.last_activity = time.time()
+            except Exception as e:
+                logger.error(f"Ошибка в wake word detection: {e}")
+                time.sleep(0.1)
+
+    def _listen_commands(self):
+        """Обработка команд с использованием Google Speech-to-Text"""
+        while self.is_running:
+            if self.is_listening:
+                try:
+                    # Проверка таймаута
+                    if time.time() - self.last_activity > self.command_timeout:
+                        self.is_listening = False
+                        speak("Режим прослушивания завершен")
+                        continue
+
+                    # Используем speech_recognition для захвата аудио
+                    with self.microphone as source:
+                        logger.info("Слушаю команду...")
+                        try:
+                            audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=5)
+                            text = self.recognizer.recognize_google(audio, language="ru-RU").lower()
+                            print(f"\n[Распознано] {text}")
+                            logger.info(f"Распознано: {text}")
+                            self._process_command(text)
+                            self.last_activity = time.time()
+                        except sr.WaitTimeoutError:
+                            continue
+                        except sr.UnknownValueError:
+                            logger.info("Не удалось распознать речь")
+                        except sr.RequestError as e:
+                            logger.error(f"Ошибка сервиса распознавания: {e}")
+                            speak("Проблемы с интернет-соединением")
+
+                except Exception as e:
+                    logger.error(f"Ошибка в обработке команд: {e}")
+                    time.sleep(0.1)
+            else:
+                time.sleep(0.1)
+
+    def _process_command(self, text):
+        """Обработка команды"""
+        # Сначала проверяем известные команды
+        for cmd, action in self.command_actions.items():
+            if cmd in text:
+                try:
+                    action(text)
+                    return
+                except Exception as e:
+                    logger.error(f"Ошибка выполнения команды: {e}")
+                    self._play_sound('error')
+                    return
+        
+        # Если команда не найдена - отправляем вопрос нейросети
+        if len(text.split()) >= 2:  # Если есть хотя бы 2 слова
+            logger.info(f"Отправка запроса нейросети: {text}")
+            response = ask_ollama(text)
+            speak(response)  # Озвучиваем ответ
+        else:
+            logger.info("Не распознано значимой команды")
+            speak("Повторите, пожалуйста")
 
     def _handle_move(self, text):
-        target = text.split("наведи на")[-1].strip()
-        if not move_to_text(target, threshold=70):
-            self.audio.play_sound('error')
+        """Перемещение курсора"""
+        for prefix in ["наведи на", "наведи курсор на", "перемести на"]:
+            if prefix in text:
+                target = text.split(prefix)[-1].strip()
+                if not move_to_text(target, threshold=70):
+                    self._play_sound('error')
 
     def _handle_click(self, text):
-        target = text.split("нажми на")[-1].strip()
-        if not click_to_text(target, clicks=2):
-            self.audio.play_sound('error')
+        """Клик по элементу"""
+        for prefix in ["нажми на", "кликни на", "клик по"]:
+            if prefix in text:
+                target = text.split(prefix)[-1].strip()
+                if not click_to_text(target, clicks=2):
+                    self._play_sound('error')
+
     def _weather(self, text=None):
+        """Прогноз погоды"""
         try:
-            from command import get_weather
             weather = get_weather()
-            
-            if not weather:
-                self.audio.play_sound('error')
-                return
-                
-            temp_text = weather['temp'].replace('−', 'минус ')
-            message = (
-                f"Сейчас в {weather['city']} {temp_text}. "
-                f"{weather['weather'].capitalize()}."
-            )
-            
-            engine = pyttsx3.init()
-            engine.say("Обновляю данные о погоде... " + message)
-            engine.runAndWait()
-            
+            speak(f"Погода: {weather['temp']}")
+            logger.info(f"☀️ Погода: {weather['temp']}")
         except Exception as e:
-            logger.error(f"Ошибка погоды: {str(e)}")
-            self.audio.play_sound('error')
+            logger.error(f"Ошибка погоды: {e}")
+            self._play_sound('error')
+
+    def _play_sound(self, name):
+        """Воспроизведение звукового сигнала"""
+        if name in self.sounds:
+            self.sounds[name].play()
+
+    def stop(self):
+        """Завершение работы"""
+        self.is_running = False
+        if hasattr(self, 'audio_stream'):
+            self.audio_stream.stop_stream()
+            self.audio_stream.close()
+        self.pyaudio.terminate()
+        pygame.quit()
+        logger.info("🔴 Ассистент остановлен")
+        os._exit(0)
 
 if __name__ == "__main__":
-    VoiceAssistant().start()
+    try:
+        assistant = VoiceAssistant()
+        assistant.start()
+    except Exception as e:
+        logging.critical(f"Критическая ошибка: {e}")
+        os._exit(1)

@@ -1,9 +1,13 @@
 # venv
 .venv
 .env
+venv
 
 # files
 *.log
+vosk-model-en-us-0.22
+pip
+Lib
 
 # python
 __pycache__

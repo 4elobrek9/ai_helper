@@ -1,7 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 import socket
-import pyttsx3
 # =============================== погода ==========================
 def get_ip():
     try:
@@ -105,3 +104,71 @@ def get_weather():
         # Резервный вариант через Яндекс
         return get_yandex_weather(city) if 'city' in locals() else None
 # =============================== end ==========================
+
+# import requests
+# from bs4 import BeautifulSoup
+# import socket
+
+# def get_weather_for_mytishchi():
+# #     """Получаем погоду именно для Мытищ (Подмосковье)"""
+# #     try:
+# #         # Прямая ссылка на Мытищи с уточнением региона
+# #         url = "https://yandex.ru/pogoda/10463"
+# #         headers = {
+# #             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+# #         }
+        
+# #         print(f"Запрашиваем погоду для Мытищ по адресу: {url}")
+# #         response = requests.get(url, headers=headers)
+        
+# #         if response.status_code != 200:
+# #             print(f"Ошибка запроса: {response.status_code}")
+# #             return None
+
+# #         soup = BeautifulSoup(response.text, 'html.parser')
+
+# #         # Новый селектор для температуры (актуальный на 2023 год)
+# #         temp = soup.find('span', class_='temp__value')
+# #         if not temp:
+# #             # Альтернативный селектор
+# #             temp = soup.find('div', class_='fact__temp').find('span', class_='temp__value')
+        
+# #         if not temp:
+# #             print("Не найдена температура на странице")
+# #             return None
+            
+# #         temp_value = temp.text.strip()
+# #         print(f"Текущая температура: {temp_value}")
+
+# #         # Поиск описания погоды
+# #         weather = soup.find('div', class_='link__condition')
+# #         if not weather:
+# #             weather = soup.find('div', class_='fact__condition')
+        
+# #         if not weather:
+# #             print("Не найдено описание погоды")
+# #             return None
+            
+# #         weather_text = weather.text.strip()
+# #         print(f"Состояние погоды: {weather_text}")
+
+# #         return {
+# #             'city': 'Мытищи',
+# #             'temp': temp_value,
+# #             'weather': weather_text
+# #         }
+        
+# #     except Exception as e:
+# #         print(f"Ошибка при получении погоды: {str(e)}")
+# #         return None
+
+# # # Пример использования
+# if __name__ == "__main__":
+#     print("=== Получаем погоду для Мытищ ===")
+#     weather = get_weather_for_mytishchi()
+#     if weather:
+#         print("\nТекущая погода в Мытищах:")
+#         print(f"Температура: {weather['temp']}°C")
+#         print(f"Состояние: {weather['weather']}")
+#     else:
+#         print("Не удалось получить данные о погоде")
