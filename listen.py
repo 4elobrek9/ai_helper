@@ -27,7 +27,7 @@ def ask_ollama(question: str) -> str:
             "http://localhost:11434/api/generate",
             json={
                 "model": "llama3",
-                "prompt": f"[INST] Ответь развернуто на русском (говори от женского рода милой доброй девушки, говори от лица человека, обращайся конкретно к пользователю и т.д.) вопрос: {question} [/INST]",
+                "prompt": f"[INST] Ответь на русском и достаточно понятно (говори от женского рода милой доброй девушки c интересной жизнью, говори МАКСИМАЛЬНО человечно (без имени)) вопрос: {question} [/INST]",
                 "stream": False,
                 "options": {"temperature": 0.7}
             },
@@ -47,7 +47,7 @@ def ask_ollama(question: str) -> str:
 
 class VoiceAssistant:
     def __init__(self):
-        # Инициализация звука
+        
         pygame.mixer.init()
         self.sounds = {
             'start': pygame.mixer.Sound('./audio/right.mp3'),
@@ -61,7 +61,7 @@ class VoiceAssistant:
         self.recognizer.pause_threshold = 0.8
         self.recognizer.energy_threshold = 400
         
-        # Инициализация Picovoice
+
         self.porcupine = pvporcupine.create(
             access_key='eav8QQvpt4NZ8cpyP+51KxTso4LxSXMWzsCqPGHrRUASriXhqAKfLA==',
             keyword_paths=['models/lumia.ppn']
@@ -137,10 +137,11 @@ class VoiceAssistant:
         while self.is_running:
             if self.is_listening:
                 try:
-                    # Проверка таймаута
+                    
                     if time.time() - self.last_activity > self.command_timeout:
                         self.is_listening = False
                         speak("Режим прослушивания завершен")
+                        self.start(self)
                         continue
 
                     # Используем speech_recognition для захвата аудио
@@ -181,16 +182,16 @@ class VoiceAssistant:
                     return
         
         # Если команда не найдена - отправляем вопрос нейросети
-        if len(text.split()) >= 2:  # Если есть хотя бы 2 слова
+        if len(text.split()) >= 3:  # Если есть хотя бы 2 слова
             logger.info(f"Отправка запроса нейросети: {text}")
+            speak("Секунду, формулирую мысль")
             response = ask_ollama(text)
-            speak(response)  # Озвучиваем ответ
+            speak(response)
         else:
             logger.info("Не распознано значимой команды")
             speak("Повторите, пожалуйста")
 
     def _handle_move(self, text):
-        """Перемещение курсора"""
         for prefix in ["наведи на", "наведи курсор на", "перемести на"]:
             if prefix in text:
                 target = text.split(prefix)[-1].strip()

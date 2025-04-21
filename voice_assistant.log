@@ -1,3 +1,21 @@
 2025-04-15 00:45:26,282 - INFO - Микрофон инициализирован: <speech_recognition.Microphone object at 0x0000020FE11BD190>
 2025-04-15 00:45:26,296 - ERROR - Ошибка загрузки звуков: No file 'Простите_за_ожидание.wav' found in working directory 'C:\Users\aboby\ai_helper'.
 2025-04-15 00:45:26,296 - INFO - Запуск ассистента...
+2025-04-21 10:58:25,743 - INFO - Калибровка микрофона...
+2025-04-21 10:58:27,749 - INFO - Калибровка завершена
+2025-04-21 10:58:27,760 - INFO - Поток обнаружения wake word запущен
+2025-04-21 10:58:27,760 - INFO - Поток WakeWordDetector запущен
+2025-04-21 10:58:27,762 - INFO - Поток прослушивания команд запущен
+2025-04-21 10:58:27,762 - INFO - Поток CommandListener запущен
+2025-04-21 10:58:27,763 - INFO - Состояние: listening=False, активность=1745222307.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:58:27,763 - INFO - Поток SystemMonitor запущен
+2025-04-21 10:58:37,764 - INFO - Состояние: listening=False, активность=1745222317.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:58:47,764 - INFO - Состояние: listening=False, активность=1745222327.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:58:57,765 - INFO - Состояние: listening=False, активность=1745222337.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:59:07,766 - INFO - Состояние: listening=False, активность=1745222347.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:59:17,767 - INFO - Состояние: listening=False, активность=1745222357.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:59:27,767 - INFO - Состояние: listening=False, активность=1745222367.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:59:37,769 - INFO - Состояние: listening=False, активность=1745222377.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:59:47,770 - INFO - Состояние: listening=False, активность=1745222387.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 10:59:57,770 - INFO - Состояние: listening=False, активность=1745222397.8s назад, потоки=[WakeWordDetector, CommandListener, SystemMonitor]
+2025-04-21 11:00:07,264 - INFO - Завершение работы ассистента...
