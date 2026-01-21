@@ -29,7 +29,7 @@ def ask_ollama(question: str) -> str:
     response = requests.post(
         "http://localhost:11434/api/generate",
         json={
-            "model": "llama3",
+            "model": "llama3:8b",
             "prompt": f"[INST] ответь максимально развёнуто на русском языке на мой вопрос чтобы я всё понял , вопрос: {question} [/INST]",
             "stream": False,
             "options": {"temperature": 0.5}
