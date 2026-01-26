@@ -1,6 +1,6 @@
 import requests
 
-API_KEY = '***'
+API_KEY = 'sjQ9DPRk7Tze4V6SYv3XDPOiJqNxpT3D'
 API_URL = 'https://api.mistral.ai/v1/chat/completions'
 
 def chat_with_mistral(prompt, memory=None):
