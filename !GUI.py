@@ -1,32 +1,67 @@
 import flet as ft
-import time
+import sqlite3
+import sounddevice as sd
+import math
 
-# Примечание для будущего: Пользователь предпочитает футуристичный дизайн (Living Shard).
-# Реализована бесшовная трансформация кнопки чата в окно (Morphing UI).
-# Исправлена ошибка TypeError путем замены animate_width/height на animate_size.
-# Исправлена кликабельность центрального ядра (Fingerprint).
+# ПРИМЕЧАНИЕ ДЛЯ БУДУЩЕГО: 
+# Дизайн: Футуристичный (Living Shard), вертикальная ориентация.
+# Функции: Динамическое позиционирование сателлитов от центра, морфинг чата, конфиг с SQLite.
+# Зависимости: flet, sounddevice.
+
+def init_db():
+    conn = sqlite3.connect("config.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            id INTEGER PRIMARY KEY,
+            api_key TEXT,
+            prompt TEXT,
+            audio_device TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_settings(api_key, prompt, device):
+    conn = sqlite3.connect("config.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM settings")  # Храним только одну актуальную запись
+    cursor.execute("INSERT INTO settings (api_key, prompt, audio_device) VALUES (?, ?, ?)", 
+                   (api_key, prompt, device))
+    conn.commit()
+    conn.close()
+
+def get_audio_devices():
+    devices = sd.query_devices()
+    input_devices = [d['name'] for d in devices if d['max_input_channels'] > 0]
+    return list(set(input_devices)) # Убираем дубликаты
 
 def main(page: ft.Page):
+    init_db()
+    
     page.title = "AI Helper - Living Shard"
     page.window_width = 450
     page.window_height = 800
     page.bgcolor = "#0f0f13"
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.window_resizable = False
     page.padding = 0
+    
+    # Центр экрана для расчетов
+    CENTER_X = 225 - 30 # Половина ширины минус половина размера кнопки
+    CENTER_Y = 400 - 30 # Половина высоты
+    RADIUS = 120
 
-    # Состояние
     is_menu_open = False
     is_voice_active = False
     is_chat_expanded = False
+    is_config_open = False
 
     CYAN = "#00ffff"
     CYAN_GLOW = "0x4400ffff"
 
-    # --- Звуковые волны ---
+    # --- Волны (центр) ---
     class WaveCircle(ft.Container):
-        def __init__(self, size=80, duration=2000):
+        def __init__(self, size=80):
             super().__init__()
             self.width = size
             self.height = size
@@ -34,172 +69,154 @@ def main(page: ft.Page):
             self.border = ft.border.all(2, CYAN)
             self.opacity = 0
             self.scale = 1
-            self.animate_opacity = ft.Animation(duration, ft.AnimationCurve.EASE_OUT)
-            self.animate_scale = ft.Animation(duration, ft.AnimationCurve.EASE_OUT)
+            self.animate_opacity = ft.Animation(1500, ft.AnimationCurve.EASE_OUT)
+            self.animate_scale = ft.Animation(1500, ft.AnimationCurve.EASE_OUT)
 
     wave1 = WaveCircle()
     wave2 = WaveCircle()
 
-    # --- Содержимое чата ---
-    chat_content = ft.Column([
-        ft.Row([
-            ft.Text("NEURAL LINK", color=CYAN, weight=ft.FontWeight.BOLD, size=14),
-            ft.IconButton(ft.Icons.CLOSE, icon_color="white", icon_size=18, on_click=lambda _: toggle_chat_morph(False))
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        ft.Divider(color="white24", height=1),
-        ft.ListView([
-            ft.Container(ft.Text("System: Связь установлена.", color=CYAN, size=12), bgcolor="white10", padding=8, border_radius=8),
-            ft.Container(ft.Text("AI: Ожидаю ввода директив...", color="white", size=12), bgcolor="white10", padding=8, border_radius=8),
-        ], expand=True, spacing=8),
-        ft.Row([
-            ft.TextField(hint_text="Команда...", border_color="white24", expand=True, text_size=12, height=40),
-            ft.IconButton(ft.Icons.SEND_ROUNDED, icon_color=CYAN, icon_size=20)
-        ])
-    ], opacity=0, animate_opacity=ft.Animation(400))
+    # --- Окно Настроек (Config) ---
+    api_input = ft.TextField(label="API KEY", password=True, can_reveal_password=True, border_color="white24")
+    prompt_input = ft.TextField(label="SYSTEM PROMPT", multiline=True, min_lines=3, border_color="white24")
+    device_dropdown = ft.Dropdown(label="AUDIO DEVICE", options=[ft.dropdown.Option(d) for d in get_audio_devices()], border_color="white24")
 
-    # Кнопка чата (которая станет окном)
-    btn_chat = ft.Container(
-        content=ft.Stack([
-            ft.Container(
-                content=ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINED, color="white", size=24),
-                alignment=ft.alignment.center,
-                key="icon_box"
-            ),
-            ft.Container(content=chat_content, key="chat_box", visible=False)
-        ]),
-        width=60,
-        height=60,
-        bgcolor="white10",
-        border=ft.border.all(1, "white12"),
-        border_radius=15,
-        blur=15,
-        alignment=ft.alignment.center,
-        # Заменили animate_width/height на универсальный animate_size
+    def handle_save_config(e):
+        save_settings(api_input.value, prompt_input.value, device_dropdown.value)
+        toggle_config_morph(False)
+        page.snack_bar = ft.SnackBar(ft.Text("Настройки сохранены в БД"))
+        page.snack_bar.open = True
+        page.update()
+
+    config_panel = ft.Container(
+        content=ft.Column([
+            ft.Row([
+                ft.Text("CORE CONFIG", color=CYAN, weight=ft.FontWeight.BOLD),
+                ft.IconButton(ft.Icons.CLOSE, icon_color="white", on_click=lambda _: toggle_config_morph(False))
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            ft.Divider(color="white24"),
+            api_input,
+            prompt_input,
+            device_dropdown,
+            ft.ElevatedButton("SAVE TO DATABASE", on_click=handle_save_config, bgcolor=CYAN, color="black")
+        ], opacity=0, animate_opacity=ft.Animation(400), spacing=15),
+        width=60, height=60, bgcolor="white10", border_radius=15, blur=15,
         animate_size=ft.Animation(500, ft.AnimationCurve.DECELERATE),
         animate_position=ft.Animation(600, ft.AnimationCurve.ELASTIC_OUT),
-        animate_scale=ft.Animation(400, ft.AnimationCurve.BOUNCE_OUT),
-        scale=0,
-        top=370, 
-        left=195,
-        on_click=lambda _: toggle_chat_morph(True) if not is_chat_expanded else None
+        top=CENTER_Y, left=CENTER_X, visible=False
+    )
+
+    def toggle_config_morph(expand):
+        nonlocal is_config_open
+        is_config_open = expand
+        if expand:
+            config_panel.width, config_panel.height = 350, 500
+            config_panel.top, config_panel.left = 150, 50
+            config_panel.bgcolor = "#12121a"
+            config_panel.border = ft.border.all(1, CYAN)
+            config_panel.content.opacity = 1
+        else:
+            config_panel.width, config_panel.height = 60, 60
+            config_panel.top, config_panel.left = CENTER_Y, CENTER_X - RADIUS
+            config_panel.bgcolor = "white10"
+            config_panel.content.opacity = 0
+            config_panel.visible = False
+        config_panel.update()
+
+    # --- Чат ---
+    chat_content = ft.Column([
+        ft.Row([ft.Text("NEURAL LINK", color=CYAN, weight="bold"), ft.IconButton(ft.Icons.CLOSE, on_click=lambda _: toggle_chat_morph(False))], alignment="spaceBetween"),
+        ft.ListView([ft.Text("AI: Link stable.", color=CYAN)], expand=True),
+        ft.TextField(hint_text="Type command...", expand=True)
+    ], opacity=0, animate_opacity=ft.Animation(400))
+
+    btn_chat = ft.Container(
+        content=ft.Stack([ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINED, color="white"), ft.Container(chat_content, visible=False)]),
+        width=60, height=60, bgcolor="white10", border_radius=15, blur=15, alignment=ft.alignment.center,
+        animate_size=ft.Animation(500, ft.AnimationCurve.DECELERATE),
+        animate_position=ft.Animation(600, ft.AnimationCurve.ELASTIC_OUT),
+        top=CENTER_Y, left=CENTER_X, scale=0,
+        on_click=lambda _: toggle_chat_morph(True)
     )
 
     def toggle_chat_morph(expand):
         nonlocal is_chat_expanded
         is_chat_expanded = expand
-        
         if expand:
-            # Превращаем в окно
-            btn_chat.width = 300
-            btn_chat.height = 400
-            btn_chat.top = 150
-            btn_chat.left = 75
-            btn_chat.border_radius = 20
-            btn_chat.bgcolor = "#12121a"
-            btn_chat.border = ft.border.all(1, "cyan24")
-            # Скрываем иконку, показываем чат
+            btn_chat.width, btn_chat.height = 350, 500
+            btn_chat.top, btn_chat.left = 150, 50
             btn_chat.content.controls[0].visible = False
             btn_chat.content.controls[1].visible = True
             chat_content.opacity = 1
         else:
-            # Возвращаем в кнопку
-            dist = 110
-            btn_chat.width = 60
-            btn_chat.height = 60
-            btn_chat.top = 370 - dist
-            btn_chat.left = 195
-            btn_chat.border_radius = 15
-            btn_chat.bgcolor = "white10"
-            btn_chat.border = ft.border.all(1, "white12")
-            # Скрываем чат, показываем иконку
+            btn_chat.width, btn_chat.height = 60, 60
+            btn_chat.top, btn_chat.left = CENTER_Y - RADIUS, CENTER_X
             btn_chat.content.controls[0].visible = True
             btn_chat.content.controls[1].visible = False
             chat_content.opacity = 0
-            
         btn_chat.update()
 
-    # --- Остальные сателлиты ---
-    def create_satellite(icon):
-        return ft.Container(
-            content=ft.IconButton(icon, icon_color="white", icon_size=24),
-            width=60, height=60, bgcolor="white10", border=ft.border.all(1, "white12"),
-            border_radius=15, blur=10, alignment=ft.alignment.center,
-            animate_position=ft.Animation(600, ft.AnimationCurve.ELASTIC_OUT),
-            animate_scale=ft.Animation(400, ft.AnimationCurve.BOUNCE_OUT),
-            scale=0, top=370, left=195
-        )
+    # --- Остальные Кнопки ---
+    btn_tools = ft.Container(content=ft.Icon(ft.Icons.AUTO_FIX_HIGH, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ft.Animation(600, ft.AnimationCurve.ELASTIC_OUT), top=CENTER_Y, left=CENTER_X, scale=0)
+    
+    btn_mic = ft.Container(content=ft.Icon(ft.Icons.MIC_NONE_ROUNDED, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ft.Animation(600, ft.AnimationCurve.ELASTIC_OUT), top=CENTER_Y, left=CENTER_X, scale=0)
+    
+    btn_config_launcher = ft.Container(content=ft.Icon(ft.Icons.SETTINGS_INPUT_COMPONENT, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ft.Animation(600, ft.AnimationCurve.ELASTIC_OUT), top=CENTER_Y, left=CENTER_X, scale=0, on_click=lambda _: [setattr(config_panel, 'visible', True), toggle_config_morph(True)])
 
-    btn_tools = create_satellite(ft.Icons.AUTO_FIX_HIGH)
-    btn_mic = create_satellite(ft.Icons.MIC_NONE_ROUNDED)
-    btn_settings = create_satellite(ft.Icons.SETTINGS_INPUT_COMPONENT)
-
-    # Логика микрофона
     def toggle_voice(e):
         nonlocal is_voice_active
         is_voice_active = not is_voice_active
-        btn_mic.content.icon_color = CYAN if is_voice_active else "white"
+        btn_mic.content.color = CYAN if is_voice_active else "white"
         btn_mic.border = ft.border.all(1, CYAN if is_voice_active else "white12")
-        btn_mic.update()
-        
-        wave1.opacity, wave1.scale = (0.5, 2.5) if is_voice_active else (0, 1)
-        wave2.opacity, wave2.scale = (0.3, 3.5) if is_voice_active else (0, 1)
-        wave1.update(); wave2.update()
+        wave1.opacity, wave1.scale = (0.5, 2.8) if is_voice_active else (0, 1)
+        wave2.opacity, wave2.scale = (0.3, 3.8) if is_voice_active else (0, 1)
+        btn_mic.update(); wave1.update(); wave2.update()
 
-    btn_mic.content.on_click = toggle_voice
+    btn_mic.on_click = toggle_voice
 
-    satellites = [btn_chat, btn_tools, btn_mic, btn_settings]
+    satellites = [btn_chat, btn_tools, btn_mic, btn_config_launcher]
 
-    # --- Центральное Ядро ---
+    # --- Ядро ---
     core = ft.GestureDetector(
-        mouse_cursor=ft.MouseCursor.CLICK,
         on_tap=lambda _: toggle_menu(),
         content=ft.Container(
-            content=ft.Container(
-                content=ft.Icon(ft.Icons.FINGERPRINT, size=40, color=CYAN),
-                width=80, height=80, bgcolor="#1a1a24", border=ft.border.all(1, "white24"),
-                border_radius=40, alignment=ft.alignment.center,
-                shadow=ft.BoxShadow(spread_radius=2, blur_radius=20, color=CYAN_GLOW),
-            ),
-            padding=10,
+            content=ft.Icon(ft.Icons.FINGERPRINT, size=40, color=CYAN),
+            width=80, height=80, bgcolor="#1a1a24", border_radius=40, alignment=ft.alignment.center,
+            shadow=ft.BoxShadow(spread_radius=2, blur_radius=25, color=CYAN_GLOW),
             animate_scale=ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
         )
     )
 
     def toggle_menu():
-        nonlocal is_menu_open, is_chat_expanded
+        nonlocal is_menu_open
         is_menu_open = not is_menu_open
-        
-        # Если закрываем меню, принудительно сворачиваем чат
-        if not is_menu_open and is_chat_expanded:
-            toggle_chat_morph(False)
-            
         core.content.scale = 1.2 if is_menu_open else 1.0
-        dist = 110 
-        positions = [(370 - dist, 195), (370, 195 + dist), (370 + dist, 195), (370, 195 - dist)]
-
+        
+        # Углы: Верх(270), Право(0), Низ(90), Лево(180)
+        angles = [270, 0, 90, 180] 
+        
         for i, btn in enumerate(satellites):
-            if i == 0 and is_chat_expanded: continue
-            
             if is_menu_open:
-                btn.top, btn.left = positions[i]
-                btn.scale, btn.opacity = 1, 1
+                angle_rad = math.radians(angles[i])
+                btn.top = CENTER_Y + RADIUS * math.sin(angle_rad)
+                btn.left = CENTER_X + RADIUS * math.cos(angle_rad)
+                btn.scale = 1
             else:
-                btn.top, btn.left = 370, 195
-                btn.scale, btn.opacity = 0, 0
+                btn.top, btn.left = CENTER_Y, CENTER_X
+                btn.scale = 0
             btn.update()
         core.update()
 
-    instruction = ft.Text("НАЖМИ НА ЯДРО", size=12, color="white24", weight=ft.FontWeight.BOLD)
-
-    layout = ft.Stack([
-        ft.Container(wave2, top=370-10, left=195-10), 
-        ft.Container(wave1, top=370-10, left=195-10),
-        btn_chat, btn_tools, btn_mic, btn_settings,
-        ft.Container(core, top=360, left=185),
-        ft.Container(instruction, bottom=100, left=160)
-    ], expand=True)
-
-    page.add(layout)
+    page.add(ft.Stack([
+        # Волны из центра
+        ft.Container(wave2, top=CENTER_Y-10, left=CENTER_X-10), 
+        ft.Container(wave1, top=CENTER_Y-10, left=CENTER_X-10),
+        # Слой кнопок
+        btn_chat, btn_tools, btn_mic, btn_config_launcher,
+        config_panel,
+        # Ядро
+        ft.Container(core, top=CENTER_Y-10, left=CENTER_X-10),
+        ft.Container(ft.Text("NEURAL SHARD ACTIVE", size=10, color="white24", weight="bold"), bottom=50, left=155)
+    ], expand=True))
 
 if __name__ == "__main__":
     ft.app(target=main)

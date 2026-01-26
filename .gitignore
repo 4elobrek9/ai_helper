@@ -8,6 +8,7 @@ venv
 vosk-model-en-us-0.22
 pip
 Lib
+*.db
 
 # python
 __pycache__
