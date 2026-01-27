@@ -2,10 +2,14 @@ import flet as ft
 import sqlite3
 import sounddevice as sd
 import math
+import os
 import time
 import threading
 import listen 
 from listen import VoiceAssistant, process_text_query, load_memory
+import ctypes
+from PIL import Image
+import pystray
 
 # ЗАМЕТКИ ДЛЯ БУДУЩЕГО: 
 # Дизайн: Living Shard, 400x600. 
@@ -79,26 +83,77 @@ def get_audio_devices(kind='input'):
 
 voice_assistant_instance = None
 
+try:
+    myappid = 'lumi.ai.assistant.2.0' # Любая уникальная строка
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception:
+    pass
+
 def main(page: ft.Page):
-    global voice_assistant_instance
-    init_db()
-    
-    # Конфигурация окна (Исправлено для совместимости)
+    # --- 2. ПУТЬ К ИКОНКЕ ---
+    # Получаем полный абсолютный путь к файлу images.jpg в папке со скриптом
+    icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "images.jpg"))
+
+    # --- 3. НАСТРОЙКА ТРЕЯ (Справа внизу) ---
+    def quit_app(icon, item):
+        icon.stop()
+        page.window.destroy()
+
+    def show_app(icon, item):
+        page.window.visible = True
+        page.window.minimized = False
+        page.update()
+        page.window.to_front()
+
+    def setup_tray():
+        if os.path.exists(icon_path):
+            img = Image.open(icon_path)
+            menu = pystray.Menu(
+                pystray.MenuItem("Развернуть LUMI", show_app, default=True),
+                pystray.MenuItem("Выход", quit_app)
+            )
+            tray = pystray.Icon("LUMI AI", img, "LUMI AI", menu)
+            tray.run()
+
+    # Сразу запускаем трей в отдельном потоке
+    threading.Thread(target=setup_tray, daemon=True).start()
+
+    # --- 4. ЛОГИКА СВОРАЧИВАНИЯ В ТРЕЙ ---
+    def on_window_event(e):
+        if e.data == "minimize":
+            # Скрываем окно совсем (оно исчезает из панели задач, остается в трее)
+            page.window.visible = False
+            page.update()
+        elif e.data == "restore":
+            page.window.visible = True
+            page.update()
+
+    page.on_window_event = on_window_event
+
+    # --- Конфигурация окна ---
     page.title = "LUMI AI"
+    
+    # ПРИНУДИТЕЛЬНАЯ УСТАНОВКА ИКОНКИ ОКНА
+    if os.path.exists(icon_path):
+        page.window.icon = icon_path  # Для самого окна
+    
     page.window.width = 400
     page.window.height = 600
     page.window.resizable = False
     page.window.maximizable = False
     page.window.always_on_top = True
+
+    # --- УСТАНОВКА ИКОНКИ ---
+    # Указываем путь к иконке (используем абсолютный путь для надежности)
+    icon_path = os.path.join(os.path.dirname(__file__), "images.jpg")
+    if os.path.exists(icon_path):
+        page.window.icon = icon_path  # Это ставит иконку в окно и таскбар
+    # -------------------------
     
-    # Пытаемся центрировать окно (новые версии Flet используют .window.center())
     try:
         page.window.center()
     except Exception:
-        try:
-            page.window_center()
-        except Exception:
-            pass
+        pass
     
     page.bgcolor = "#0f0f13"
     page.padding = 0
@@ -384,6 +439,8 @@ def main(page: ft.Page):
         threading.Thread(target=pulse_waves_logic, daemon=True).start()
 
     threading.Thread(target=run_loading, daemon=True).start()
+
+    page.update()
 
 if __name__ == "__main__":
     ft.app(target=main)
