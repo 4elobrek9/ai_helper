@@ -9,6 +9,7 @@ vosk-model-en-us-0.22
 pip
 Lib
 *.db
+*.json
 
 # python
 __pycache__

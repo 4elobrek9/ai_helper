@@ -4,6 +4,9 @@ import sounddevice as sd
 import math
 import time
 import threading
+import json
+import listen 
+from listen import VoiceAssistant, process_text_query, load_memory
 
 # ЗАМЕТКИ ДЛЯ БУДУЩЕГО: 
 # Дизайн: Living Shard, 400x600. 
@@ -27,15 +30,17 @@ def init_db():
         cursor.execute("ALTER TABLE settings ADD COLUMN input_device TEXT")
     if "output_device" not in columns:
         cursor.execute("ALTER TABLE settings ADD COLUMN output_device TEXT")
+    if "porcupine_key" not in columns: # Новое поле для ключа Porcupine
+        cursor.execute("ALTER TABLE settings ADD COLUMN porcupine_key TEXT")
     conn.commit()
     conn.close()
 
-def save_settings(api_key, prompt, input_dev, output_dev):
+def save_settings(api_key, prompt, input_dev, output_dev, porcupine_key):
     conn = sqlite3.connect("config.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM settings")
-    cursor.execute("INSERT INTO settings (api_key, prompt, input_device, output_device) VALUES (?, ?, ?, ?)", 
-                   (api_key, prompt, input_dev, output_dev))
+    cursor.execute("INSERT INTO settings (api_key, prompt, input_device, output_device, porcupine_key) VALUES (?, ?, ?, ?, ?)", 
+                   (api_key, prompt, input_dev, output_dev, porcupine_key))
     conn.commit()
     conn.close()
 
@@ -43,12 +48,19 @@ def load_settings():
     conn = sqlite3.connect("config.db")
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT api_key, prompt, input_device, output_device FROM settings LIMIT 1")
+        cursor.execute("SELECT api_key, prompt, input_device, output_device, porcupine_key FROM settings LIMIT 1")
         row = cursor.fetchone()
     except sqlite3.OperationalError:
         row = None
     conn.close()
-    return row if row else ("", "", None, None)
+    if row:
+        # Обработка случая, если в БД меньше колонок (при старой базе)
+        return (row[0] if len(row) > 0 else "", 
+                row[1] if len(row) > 1 else "", 
+                row[2] if len(row) > 2 else None, 
+                row[3] if len(row) > 3 else None,
+                row[4] if len(row) > 4 else "")
+    return ("", "", None, None, "")
 
 def get_audio_devices(kind='input'):
     try:
@@ -61,7 +73,10 @@ def get_audio_devices(kind='input'):
     except:
         return ["Default Device"]
 
+voice_assistant_instance = None
+
 def main(page: ft.Page):
+    global voice_assistant_instance
     init_db()
     
     page.title = "LUMI AI "
@@ -91,9 +106,9 @@ def main(page: ft.Page):
         "running": True
     }
 
-    saved_api, saved_prompt, saved_in, saved_out = load_settings()
+    saved_api, saved_prompt, saved_in, saved_out, saved_pv_key = load_settings()
 
-    # --- Волны (Активация через микрофон) ---
+    # --- Волны ---
     class WaveCircle(ft.Container):
         def __init__(self, size=80):
             super().__init__()
@@ -101,7 +116,6 @@ def main(page: ft.Page):
             self.border_radius = size / 2
             self.border = ft.border.all(2, CYAN)
             self.opacity = 0; self.scale = 1
-            # Точное центрирование под отпечатком (80x80)
             self.top = CENTER_Y 
             self.left = CENTER_X 
             self.animate_opacity = ft.Animation(1500, ft.AnimationCurve.EASE_OUT)
@@ -125,20 +139,21 @@ def main(page: ft.Page):
                     wave1.update(); wave2.update()
                 time.sleep(0.5)
 
-    # --- Окна (Теперь в отдельных переменных для управления слоями) ---
-    api_input = ft.TextField(label="API KEY", password=True, can_reveal_password=True, border_color="white24", value=saved_api)
-    prompt_input = ft.TextField(label="SYSTEM PROMPT", multiline=True, min_lines=3, border_color="white24", value=saved_prompt)
-    in_dev_dropdown = ft.Dropdown(label="INPUT (MIC)", options=[ft.dropdown.Option(d) for d in get_audio_devices('input')], border_color="white24", value=saved_in)
-    out_dev_dropdown = ft.Dropdown(label="OUTPUT (SPEAKERS)", options=[ft.dropdown.Option(d) for d in get_audio_devices('output')], border_color="white24", value=saved_out)
+    # --- Настройки ---
+    api_input = ft.TextField(label="MISTRAL API KEY", password=True, can_reveal_password=True, border_color="white24", value=saved_api, text_size=12)
+    pv_key_input = ft.TextField(label="PORCUPINE KEY", password=True, can_reveal_password=True, border_color="white24", value=saved_pv_key, text_size=12) # Поле для Porcupine
+    prompt_input = ft.TextField(label="SYSTEM PROMPT", multiline=True, min_lines=3, border_color="white24", value=saved_prompt, text_size=12)
+    in_dev_dropdown = ft.Dropdown(label="INPUT (MIC)", options=[ft.dropdown.Option(d) for d in get_audio_devices('input')], border_color="white24", value=saved_in, text_size=12)
+    out_dev_dropdown = ft.Dropdown(label="OUTPUT (SPEAKERS)", options=[ft.dropdown.Option(d) for d in get_audio_devices('output')], border_color="white24", value=saved_out, text_size=12)
 
     config_window = ft.Container(
         content=ft.Column([
             ft.Column([
                 ft.Row([ft.Text("CORE CONFIG", color=CYAN, weight="bold", size=16), ft.IconButton(ft.Icons.CLOSE, icon_color="white", on_click=lambda _: toggle_config(False))], alignment="spaceBetween"),
                 ft.Divider(color="white24"),
-                api_input, prompt_input, in_dev_dropdown, out_dev_dropdown,
+                api_input, pv_key_input, prompt_input, in_dev_dropdown, out_dev_dropdown,
             ], spacing=10, scroll=ft.ScrollMode.AUTO),
-            ft.ElevatedButton("SAVE CONFIG", on_click=lambda _: save_settings(api_input.value, prompt_input.value, in_dev_dropdown.value, out_dev_dropdown.value), bgcolor=CYAN, color="black", width=350, height=45)
+            ft.ElevatedButton("SAVE CONFIG", on_click=lambda _: save_settings(api_input.value, prompt_input.value, in_dev_dropdown.value, out_dev_dropdown.value, pv_key_input.value), bgcolor=CYAN, color="black", width=350, height=45)
         ], opacity=0, animate_opacity=300, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         width=0, height=0, bgcolor="#12121a", border_radius=20, blur=25, 
         animate_size=ft.Animation(ANIM_SPEED, ft.AnimationCurve.DECELERATE),
@@ -146,15 +161,76 @@ def main(page: ft.Page):
         top=300, left=200, visible=False, shadow=ft.BoxShadow(blur_radius=50, color="black")
     )
 
+    # --- Чат (Telegram Style) ---
+    chat_list = ft.Column(spacing=15, scroll=ft.ScrollMode.AUTO, expand=True)
+    chat_input = ft.TextField(hint_text="Сообщение...", expand=True, border_color="white24", text_size=14, color="white")
+    
+    def render_message(role, text):
+        is_user = role == 'user'
+        # Стиль для сообщения
+        return ft.Row(
+            controls=[
+                ft.Container(
+                    content=ft.Text(text, color="white" if is_user else "#e0e0e0", size=13),
+                    bgcolor="#2b5278" if is_user else "#25252e", # Синий для юзера, серый для бота
+                    border_radius=ft.border_radius.only(
+                        top_left=15, top_right=15, 
+                        bottom_left=15 if is_user else 0, 
+                        bottom_right=0 if is_user else 15
+                    ),
+                    padding=10,
+                    constraints=ft.BoxConstraints(max_width=260),
+                )
+            ],
+            alignment=ft.MainAxisAlignment.END if is_user else ft.MainAxisAlignment.START,
+        )
+
+    def load_chat_history():
+        chat_list.controls.clear()
+        memory = load_memory()
+        for msg in memory:
+            chat_list.controls.append(render_message(msg['role'], msg['content']))
+        # Прокрутка вниз при открытии (немного костыльно, но работает через update)
+        chat_list.update()
+
+    def send_chat_message(e):
+        txt = chat_input.value
+        if not txt: return
+        
+        # 1. Сразу показать сообщение юзера
+        chat_list.controls.append(render_message('user', txt))
+        chat_input.value = ""
+        chat_input.focus()
+        chat_list.update()
+
+        # 2. Обработка в потоке
+        def process_response():
+            # Показываем индикатор печати (опционально)
+            typing_indicator = ft.Row([ft.Text("Lumia печатает...", size=10, color="white54")], alignment="start")
+            chat_list.controls.append(typing_indicator)
+            page.run_task(lambda: chat_list.update()) # thread-safe update
+
+            # Вызов логики AI
+            response = process_text_query(txt)
+            
+            # Удаляем индикатор и показываем ответ
+            chat_list.controls.remove(typing_indicator)
+            chat_list.controls.append(render_message('assistant', response))
+            page.run_task(lambda: chat_list.update())
+
+        threading.Thread(target=process_response, daemon=True).start()
+
     chat_window = ft.Container(
         content=ft.Column([
             ft.Column([
-                ft.Row([ft.Text("NEURAL L1NK", color=CYAN, weight="bold", size=16), ft.IconButton(ft.Icons.CLOSE, on_click=lambda _: toggle_chat(False))], alignment="spaceBetween"),
+                ft.Row([ft.Text("NEURAL CHAT", color=CYAN, weight="bold", size=16), ft.IconButton(ft.Icons.CLOSE, on_click=lambda _: toggle_chat(False))], alignment="spaceBetween"),
                 ft.Divider(color="white24"),
-                ft.Container(content=ft.ListView([ft.Text("AI: Systems ready.", color=CYAN)], spacing=10), height=300),
             ]),
-            ft.Row([ft.TextField(hint_text="Enter command...", expand=True, border_color="white24"), ft.IconButton(ft.Icons.SEND_ROUNDED, icon_color=CYAN)], alignment="center")
-        ], opacity=0, animate_opacity=300, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            # Область сообщений
+            ft.Container(content=chat_list, expand=True, padding=5),
+            # Область ввода
+            ft.Row([chat_input, ft.IconButton(ft.Icons.SEND_ROUNDED, icon_color=CYAN, on_click=send_chat_message)], alignment="center")
+        ], opacity=0, animate_opacity=300),
         width=0, height=0, bgcolor="#0d0d14", border_radius=20, blur=25,
         animate_size=ft.Animation(ANIM_SPEED, ft.AnimationCurve.DECELERATE),
         animate_position=ft.Animation(ANIM_SPEED, ft.AnimationCurve.DECELERATE),
@@ -178,6 +254,7 @@ def main(page: ft.Page):
     def toggle_chat(expand):
         state["is_chat_expanded"] = expand
         if expand:
+            load_chat_history() # Загружаем историю при открытии
             chat_window.visible = True
             chat_window.width, chat_window.height = 360, 500
             chat_window.top, chat_window.left = 50, 20
@@ -191,13 +268,28 @@ def main(page: ft.Page):
 
     # --- Кнопки вызова ---
     btn_chat = ft.Container(content=ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINED, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0, on_click=lambda _: toggle_chat(True))
-    btn_tools = ft.Container(content=ft.Icon(ft.Icons.AUTO_FIX_HIGH, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0)
+    
+    # Кнопка с подсказкой "МОДЫ"
+    btn_tools = ft.Container(content=ft.Icon(ft.Icons.AUTO_FIX_HIGH, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0, tooltip="МОДЫ (в разработке)")
     
     def toggle_mic_state(e):
+        global voice_assistant_instance
         state["is_voice_active"] = not state["is_voice_active"]
+        
         btn_mic.content.color = CYAN if state["is_voice_active"] else "white"
         btn_mic.bgcolor = "white24" if state["is_voice_active"] else "white10"
         btn_mic.update()
+
+        if state["is_voice_active"]:
+            if voice_assistant_instance is None:
+                voice_assistant_instance = VoiceAssistant()
+            threading.Thread(target=voice_assistant_instance.start, daemon=True).start()
+            print("Voice Assistant started from GUI")
+        else:
+            if voice_assistant_instance:
+                voice_assistant_instance.stop()
+                voice_assistant_instance = None # Сброс, чтобы пересоздать при следующем запуске (для обновления конфига)
+                print("Voice Assistant stopped from GUI")
 
     btn_mic = ft.Container(content=ft.Icon(ft.Icons.MIC_NONE_ROUNDED, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0, on_click=toggle_mic_state)
     btn_cfg = ft.Container(content=ft.Icon(ft.Icons.SETTINGS_INPUT_COMPONENT, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0, on_click=lambda _: toggle_config(True))
@@ -231,13 +323,9 @@ def main(page: ft.Page):
 
     # --- Стек слоев ---
     main_stack = ft.Stack([
-        # Слой 1: Волны (под отпечатком)
         wave2, wave1,
-        # Слой 2: Кнопки-сателлиты (под отпечатком)
         btn_tools, btn_mic, btn_chat, btn_cfg,
-        # Слой 3: Ядро (Отпечаток)
         ft.Container(core, top=CENTER_Y, left=CENTER_X),
-        # Слой 4: Полноэкранные Окна (ПОВЕРХ ВСЕГО)
         config_window,
         chat_window,
         ft.Container(ft.Text("LUMI AI 2.0", size=10, color="white24", weight="bold"), bottom=20, left=160)

@@ -8,6 +8,7 @@ import numpy as np
 import requests
 import pygame
 import logging
+import sqlite3  # Добавлено для чтения конфига
 from sintez import speak
 from command_OCR import move_to_text, click_to_text
 from command import get_weather
@@ -21,8 +22,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger('VoiceAI')
 
-# Системный промпт (персона Люмия)
-SYSTEM_PROMPT = "Ответь на русском и достаточно понятно (говори от женского рода милой доброй девушки c интересной жизнью, говори МАКСИМАЛЬНО человечно, тебя зовут Люмия или просто Люми, любишь паучью лилию). При ответе не стоит здороваться или что-то типо того."
+# Системный промпт (персона Люмия) - значение по умолчанию
+DEFAULT_SYSTEM_PROMPT = "Ответь на русском и достаточно понятно (говори от женского рода милой доброй девушки c интересной жизнью, говори МАКСИМАЛЬНО человечно, тебя зовут Люмия или просто Люми, любишь паучью лилию). При ответе не стоит здороваться или что-то типо того."
+
+def get_system_prompt_from_db():
+    """Загружает системный промпт из базы данных GUI"""
+    db_path = 'config.db'
+    if not os.path.exists(db_path):
+        return DEFAULT_SYSTEM_PROMPT
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT prompt FROM settings LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        
+        # Если в базе есть промпт и он не пустой, возвращаем его
+        if row and row[0] and len(row[0].strip()) > 0:
+            return row[0].strip()
+        return DEFAULT_SYSTEM_PROMPT
+    except Exception as e:
+        logger.error(f"Ошибка чтения промпта из БД: {e}")
+        return DEFAULT_SYSTEM_PROMPT
+
+def get_porcupine_key_from_db():
+    """Загружает Porcupine AccessKey из базы данных"""
+    db_path = 'config.db'
+    if not os.path.exists(db_path):
+        return None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        # Проверяем наличие колонки (на случай старой БД) - это делается в GUI init_db, тут просто select
+        cursor.execute("SELECT porcupine_key FROM settings LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        if row and row[0] and len(row[0].strip()) > 0:
+            return row[0].strip()
+        return None
+    except Exception as e:
+        return None
 
 def ask_ollama(question: str, full_memory: list) -> str:
     """Запрос к локальной Ollama с полным контекстом (hardmemory + system + history)"""
@@ -64,35 +104,69 @@ def ask_ollama(question: str, full_memory: list) -> str:
         logger.error(f"Ошибка запроса к Ollama: {e}")
         return "Не удалось получить ответ от локальной нейросети"
 
+# --- Функция для текстового общения (используется в GUI) ---
+def process_text_query(text: str) -> str:
+    """Обрабатывает текстовый запрос без голосового вывода (для GUI чата)"""
+    save_to_memory(text, 'user')
+    summarize_hardmemory()
+    
+    hard_memory = load_hardmemory()
+    memory = load_memory()
+    current_system_prompt = get_system_prompt_from_db()
+    
+    full_memory = hard_memory + [{'role': 'system', 'content': current_system_prompt}] + memory
+    
+    response_text = "..."
+    try:
+        response = mistral_api.chat_with_mistral(text, full_memory)
+        response_text = response['choices'][0]['message']['content'].strip()
+        logger.info("Mistral ответил в чат")
+    except Exception as e:
+        logger.warning(f"Mistral Error: {e}")
+        try:
+            response_text = ask_ollama(text, full_memory)
+        except:
+            response_text = "Ошибка: Нейросети недоступны."
+
+    save_to_memory(response_text, 'assistant')
+    summarize_hardmemory()
+    return response_text
+
 class VoiceAssistant:
     def __init__(self):
         
         pygame.mixer.init()
-        self.sounds = {
-            'start': pygame.mixer.Sound('./audio/right.mp3'),
-            'confirm': pygame.mixer.Sound('./audio/right.mp3'),
-            'error': pygame.mixer.Sound('./audio/lie.mp3')
-        }
+        # Проверка путей к звукам, чтобы не падало, если файлов нет
+        self.sounds = {}
+        try:
+            self.sounds['start'] = pygame.mixer.Sound('./audio/right.mp3')
+            self.sounds['confirm'] = pygame.mixer.Sound('./audio/right.mp3')
+            self.sounds['error'] = pygame.mixer.Sound('./audio/lie.mp3')
+        except:
+            logger.warning("Звуковые файлы не найдены")
 
         self.pyaudio = pyaudio.PyAudio()
         self.recognizer = sr.Recognizer()
         self.recognizer.pause_threshold = 0.8
         self.recognizer.energy_threshold = 400
         
-        self.porcupine = pvporcupine.create(
-            # access_key='eav8QQvpt4NZ8cpyP+51KxTso4LxSXMWzsCqPGHrRUASriXhqAKfLA==',
-            keyword_paths=['models/lumia.ppn']
-        )
+        # ПОЛУЧЕНИЕ КЛЮЧА ИЗ БД
+        pv_access_key = get_porcupine_key_from_db()
+        if not pv_access_key:
+            logger.error("ОШИБКА: Porcupine AccessKey не найден в настройках! Голосовая активация не будет работать.")
+            self.porcupine = None # Флаг, что не работает
+        else:
+            try:
+                self.porcupine = pvporcupine.create(
+                    access_key=pv_access_key,
+                    keyword_paths=['models/lumia.ppn']
+                )
+            except Exception as e:
+                logger.error(f"Ошибка инициализации Porcupine: {e}")
+                self.porcupine = None
         
-        self.audio_stream = self.pyaudio.open(
-            rate=self.porcupine.sample_rate,
-            channels=1,
-            format=pyaudio.paInt16,
-            input=True,
-            frames_per_buffer=self.porcupine.frame_length
-        )
-
-        # Команды — сделаем проверку более надёжной (cmd in text и cmd является отдельным словом или в начале/конце)
+        self.audio_stream = None 
+        
         self.command_actions = {
             "наведи на": self._handle_move,
             "нажми на": self._handle_click,
@@ -104,30 +178,51 @@ class VoiceAssistant:
         }
 
         self.is_listening = False
-        self.is_running = True
+        self.is_running = False 
         self.command_timeout = 10
         self.last_activity = 0
         self.microphone = sr.Microphone()
 
     def start(self):
+        if self.porcupine is None:
+            logger.error("Невозможно запустить: нет ключа Porcupine")
+            speak("Ошибка ключа голосового движка")
+            return
+
+        self.is_running = True
         logger.info("🚀 Ассистент запущен!")
         speak("Система готова к работе")
+
+        self.audio_stream = self.pyaudio.open(
+            rate=self.porcupine.sample_rate,
+            channels=1,
+            format=pyaudio.paInt16,
+            input=True,
+            frames_per_buffer=self.porcupine.frame_length
+        )
 
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source)
 
-        threading.Thread(target=self._detect_wakeword, daemon=True).start()
-        threading.Thread(target=self._listen_commands, daemon=True).start()
+        t1 = threading.Thread(target=self._detect_wakeword, daemon=True)
+        t2 = threading.Thread(target=self._listen_commands, daemon=True)
+        t1.start()
+        t2.start()
 
-        try:
-            while self.is_running:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            self.stop()
+        if __name__ == "__main__":
+            try:
+                while self.is_running:
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                self.stop()
 
     def _detect_wakeword(self):
         while self.is_running:
             try:
+                if self.audio_stream is None or not self.audio_stream.is_active():
+                     time.sleep(0.1)
+                     continue
+
                 pcm = self.audio_stream.read(
                     self.porcupine.frame_length, 
                     exception_on_overflow=False
@@ -137,8 +232,8 @@ class VoiceAssistant:
                     logger.info("🔊 Wake word активирована!")
                     self.is_listening = True
                     self.last_activity = time.time()
+                    self._play_sound('start')
             except Exception as e:
-                logger.error(f"Ошибка в wake word detection: {e}")
                 time.sleep(0.1)
 
     def _listen_commands(self):
@@ -174,7 +269,6 @@ class VoiceAssistant:
 
     def _process_command(self, text):
         """Обработка команды — улучшена проверка команд"""
-        # Более надёжная проверка: ищем команды как отдельные слова или префиксы
         matched = False
         for cmd, action in self.command_actions.items():
             if f" {cmd} " in f" {text} " or text.startswith(cmd + " ") or text.endswith(" " + cmd) or text == cmd:
@@ -188,25 +282,21 @@ class VoiceAssistant:
                     matched = True
                     return
         
-        # Если ни одна команда не сработала и фраза достаточно осмысленная — к нейросети
-        if len(text.split()) >= 2:  # снижено до 2 слов, чтобы короткие вопросы тоже обрабатывались
+        if len(text.split()) >= 2: 
             logger.info(f"Отправка запроса нейросети: {text}")
             speak("Секунду, формулирую мысль")
             
-            # Сохраняем пользовательское сообщение
             save_to_memory(text, 'user')
-            
-            # Обновляем hardmemory (фильтруем важное из всей истории)
             summarize_hardmemory()
             
-            # Загружаем контекст: hardmemory (важное) + обычная история
             hard_memory = load_hardmemory()
             memory = load_memory()
-            full_memory = hard_memory + [{'role': 'system', 'content': SYSTEM_PROMPT}] + memory
+            current_system_prompt = get_system_prompt_from_db()
+            
+            full_memory = hard_memory + [{'role': 'system', 'content': current_system_prompt}] + memory
             
             response_text = None
             
-            # Mistral (онлайн)
             try:
                 response = mistral_api.chat_with_mistral(text, full_memory)
                 response_text = response['choices'][0]['message']['content'].strip()
@@ -225,7 +315,6 @@ class VoiceAssistant:
             if response_text and response_text.strip():
                 speak(response_text)
                 save_to_memory(response_text, 'assistant')
-                # Ещё раз обновляем hardmemory после ответа (на случай, если в ответе есть важное)
                 summarize_hardmemory()
             else:
                 speak("Не удалось получить ответ")
@@ -267,16 +356,22 @@ class VoiceAssistant:
         if name in self.sounds:
             self.sounds[name].play()
 
-    def stop(self):
-        summarize_hardmemory()  # Сохраняем важное при выходе
+    def stop(self, text=None):
+        summarize_hardmemory() 
         self.is_running = False
-        if hasattr(self, 'audio_stream'):
-            self.audio_stream.stop_stream()
-            self.audio_stream.close()
-        self.pyaudio.terminate()
-        pygame.quit()
+        
+        if self.audio_stream is not None:
+            try:
+                self.audio_stream.stop_stream()
+                self.audio_stream.close()
+            except Exception as e:
+                print(f"Ошибка закрытия потока: {e}")
+        
         logger.info("🔴 Ассистент остановлен")
-        os._exit(0)
+        if __name__ == "__main__":
+             self.pyaudio.terminate()
+             pygame.quit()
+             os._exit(0)
 
 
 # Функции работы с памятью
@@ -320,7 +415,6 @@ def load_hardmemory():
 
 def summarize_hardmemory():
     memory = load_memory()
-    # Расширенный список ключевых слов (русский + английский)
     keywords = [
         'important', 'важно', 'запомни', 'remember',
         'age', 'возраст', 'лет',
