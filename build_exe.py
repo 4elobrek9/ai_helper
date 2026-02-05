@@ -1,9 +1,10 @@
-import sys
-import subprocess
 import os
+import subprocess
+import sys
 
 PROJECT_NAME = "AI_Helper"
-ENTRY_FILE = "gui.py"
+ENTRY_FILE = "GUI.py"
+ICON_FILE = "app_icon.ico" if os.path.exists("app_icon.ico") else "app_icon.png"
 
 ADD_DATA = [
     "audio;audio",
@@ -11,7 +12,6 @@ ADD_DATA = [
     "config.db;.",
     "memory.json;.",
     "hardmemory.json;.",
-    "command.json;.",
     "requirements.txt;.",
     "icon.png;.",
     "app_icon.png;.",
@@ -19,48 +19,34 @@ ADD_DATA = [
     "conf.mp3;.",
 ]
 
+
 def run(cmd):
     subprocess.check_call(cmd, shell=False)
 
-def ensure_clean_env():
-    # УДАЛЯЕМ ВРЕДНЫЙ pathlib
-    try:
-        import pathlib  # noqa
-        print("⚠ Найден pip-пакет pathlib — удаляю")
-        run([sys.executable, "-m", "pip", "uninstall", "-y", "pathlib"])
-    except Exception:
-        pass
 
 def ensure_pyinstaller():
     try:
-        import PyInstaller  # noqa
+        import PyInstaller  # noqa: F401
     except ImportError:
-        print("📦 Устанавливаю PyInstaller")
         run([sys.executable, "-m", "pip", "install", "--upgrade", "pyinstaller"])
 
-def build():
-    ensure_clean_env()
-    ensure_pyinstaller()
 
+def build():
+    ensure_pyinstaller()
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--onefile",
-        "--windowed",
-        "--clean",
-        "--noconfirm",
+        "--onefile", "--windowed", "--clean", "--noconfirm",
         "--name", PROJECT_NAME,
     ]
-
+    if os.path.exists(ICON_FILE):
+        cmd.extend(["--icon", ICON_FILE])
     for item in ADD_DATA:
-        cmd.extend(["--add-data", item])
-
+        if os.path.exists(item.split(";")[0]):
+            cmd.extend(["--add-data", item])
     cmd.append(ENTRY_FILE)
-
-    print("▶ Сборка exe...")
     run(cmd)
+    print(f"✅ dist/{PROJECT_NAME}.exe")
 
-    print("\n✅ ГОТОВО")
-    print(f"📦 dist/{PROJECT_NAME}.exe")
 
 if __name__ == "__main__":
     build()
