@@ -60,3 +60,24 @@
 
 ---
 *LUMI AI v0.0.1 (Alpha) — Создано с душой и кодом.*
+
+
+## 🧠 Новая модульная voice-архитектура (vNext)
+
+Добавлены новые файлы `voice_architecture.py`, `lumi_cli.py`, `lumi_config.yaml` с plugin-like интерфейсами:
+- `STTEngine`, `TTSEngine`, `WakeWordEngine`, `LLMProvider` (единые абстракции и взаимозаменяемость).
+- Асинхронный цикл: wake word -> распознавание -> LLM -> TTS -> возврат в ожидание.
+- Конфиг в YAML/JSON + горячая перезагрузка конфига без рестарта.
+- История диалога с ограничением контекста, настраиваемый system prompt, опциональный кэш ответов.
+- CLI режимы:
+  - `python lumi_cli.py --mode show-config`
+  - `python lumi_cli.py --mode chat`
+  - `python lumi_cli.py --mode voice`
+
+### Поддерживаемые движки (архитектурно)
+- **Wake Word**: Porcupine / openWakeWord / Snowboy / Precise / Vosk (через конфиг и адаптеры).
+- **STT**: Whisper/faster-whisper/whisper.cpp по умолчанию, также Vosk/Google/Azure (через адаптеры).
+- **TTS**: pyttsx3 (офлайн), gTTS, Azure TTS, ElevenLabs, system TTS (через адаптеры).
+- **LLM**: Ollama/LM Studio/llama.cpp и облачные OpenAI/Anthropic/Yandex/GigaChat (через endpoint-совместимые провайдеры).
+
+> Текущее состояние: реализован рабочий каркас с fallback-режимами и точками расширения для быстрого подключения конкретных SDK.

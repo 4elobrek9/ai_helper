@@ -27,7 +27,12 @@ def init_db():
             prompt TEXT,
             input_device TEXT,
             output_device TEXT,
-            porcupine_key TEXT
+            porcupine_key TEXT,
+            wake_word_engine TEXT,
+            ai_provider TEXT,
+            tts_engine TEXT,
+            ui_language TEXT,
+            response_language TEXT
         )
     """)
     # Проверка и добавление колонок для старых баз данных
@@ -39,15 +44,30 @@ def init_db():
         cursor.execute("ALTER TABLE settings ADD COLUMN output_device TEXT")
     if "porcupine_key" not in columns:
         cursor.execute("ALTER TABLE settings ADD COLUMN porcupine_key TEXT")
+    if "wake_word_engine" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN wake_word_engine TEXT")
+    if "ai_provider" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN ai_provider TEXT")
+    if "tts_engine" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN tts_engine TEXT")
+    if "ui_language" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN ui_language TEXT")
+    if "response_language" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN response_language TEXT")
     conn.commit()
     conn.close()
 
-def save_settings(api_key, prompt, input_dev, output_dev, porcupine_key):
+def save_settings(api_key, prompt, input_dev, output_dev, porcupine_key, wake_word_engine, ai_provider, tts_engine, ui_language, response_language):
     conn = sqlite3.connect("config.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM settings")
-    cursor.execute("INSERT INTO settings (api_key, prompt, input_device, output_device, porcupine_key) VALUES (?, ?, ?, ?, ?)", 
-                   (api_key, prompt, input_dev, output_dev, porcupine_key))
+    cursor.execute(
+        """INSERT INTO settings (
+            api_key, prompt, input_device, output_device, porcupine_key,
+            wake_word_engine, ai_provider, tts_engine, ui_language, response_language
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (api_key, prompt, input_dev, output_dev, porcupine_key, wake_word_engine, ai_provider, tts_engine, ui_language, response_language)
+    )
     conn.commit()
     conn.close()
 
@@ -55,20 +75,18 @@ def load_settings():
     conn = sqlite3.connect("config.db")
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT api_key, prompt, input_device, output_device, porcupine_key FROM settings LIMIT 1")
+        cursor.execute(
+            """SELECT api_key, prompt, input_device, output_device, porcupine_key,
+                      wake_word_engine, ai_provider, tts_engine, ui_language, response_language
+               FROM settings LIMIT 1"""
+        )
         row = cursor.fetchone()
     except sqlite3.OperationalError:
         row = None
     conn.close()
     if row:
-        return (
-            row[0] if row[0] is not None else "", 
-            row[1] if row[1] is not None else "", 
-            row[2] if row[2] is not None else None, 
-            row[3] if row[3] is not None else None,
-            row[4] if row[4] is not None else ""
-        )
-    return ("", "", None, None, "")
+        return tuple("" if v is None else v for v in row)
+    return ("", "", None, None, "", "Porcupine", "Mistral API", "pyttsx3", "RU", "RU")
 
 def get_audio_devices(kind='input'):
     try:
@@ -151,7 +169,8 @@ def main(page: ft.Page):
     # -------------------------
     
     try:
-        page.window.center()
+        if hasattr(page.window, "center"):
+            page.run_task(page.window.center)
     except Exception:
         pass
     
@@ -173,7 +192,7 @@ def main(page: ft.Page):
         "running": True
     }
 
-    saved_api, saved_prompt, saved_in, saved_out, saved_pv_key = load_settings()
+    saved_api, saved_prompt, saved_in, saved_out, saved_pv_key, saved_wake, saved_ai, saved_tts, saved_ui_lang, saved_rsp_lang = load_settings()
 
     # --- Слой анимации (Волны) ---
     class WaveCircle(ft.Container):
@@ -182,7 +201,12 @@ def main(page: ft.Page):
             self.width = size
             self.height = size
             self.border_radius = size / 2
-            self.border = ft.border.all(2, CYAN)
+            self.border = ft.border.Border(
+                top=ft.BorderSide(2, CYAN),
+                right=ft.BorderSide(2, CYAN),
+                bottom=ft.BorderSide(2, CYAN),
+                left=ft.BorderSide(2, CYAN),
+            )
             self.opacity = 0
             self.scale = 1
             self.top = CENTER_Y 
@@ -225,9 +249,17 @@ def main(page: ft.Page):
     prompt_input = ft.TextField(label="SYSTEM PROMPT", multiline=True, min_lines=3, border_color="white24", value=saved_prompt, text_size=12)
     in_dev_dropdown = ft.Dropdown(label="INPUT (MIC)", options=[ft.dropdown.Option(d) for d in get_audio_devices('input')], border_color="white24", value=saved_in, text_size=12)
     out_dev_dropdown = ft.Dropdown(label="OUTPUT (SPEAKERS)", options=[ft.dropdown.Option(d) for d in get_audio_devices('output')], border_color="white24", value=saved_out, text_size=12)
+    wake_word_dropdown = ft.Dropdown(label="WAKE WORD ENGINE", options=[ft.dropdown.Option(d) for d in ["Porcupine", "openWakeWord", "Snowboy", "Mycroft Precise", "Vosk Keyword"]], border_color="white24", value=saved_wake or "Porcupine", text_size=12)
+    ai_provider_dropdown = ft.Dropdown(label="AI PROVIDER", options=[ft.dropdown.Option(d) for d in ["Mistral API", "Ollama", "OpenAI", "Anthropic", "YandexGPT", "GigaChat", "g4f"]], border_color="white24", value=saved_ai or "Mistral API", text_size=12)
+    tts_engine_dropdown = ft.Dropdown(label="TTS ENGINE", options=[ft.dropdown.Option(d) for d in ["pyttsx3", "gTTS", "Azure TTS", "ElevenLabs", "System TTS"]], border_color="white24", value=saved_tts or "pyttsx3", text_size=12)
+    ui_lang_dropdown = ft.Dropdown(label="UI LANGUAGE", options=[ft.dropdown.Option(d) for d in ["RU", "EN"]], border_color="white24", value=saved_ui_lang or "RU", text_size=12)
+    response_lang_dropdown = ft.Dropdown(label="AI RESPONSE LANGUAGE", options=[ft.dropdown.Option(d) for d in ["RU", "EN"]], border_color="white24", value=saved_rsp_lang or "RU", text_size=12)
 
     def save_and_close(e):
-        save_settings(api_input.value, prompt_input.value, in_dev_dropdown.value, out_dev_dropdown.value, pv_key_input.value)
+        save_settings(
+            api_input.value, prompt_input.value, in_dev_dropdown.value, out_dev_dropdown.value, pv_key_input.value,
+            wake_word_dropdown.value, ai_provider_dropdown.value, tts_engine_dropdown.value, ui_lang_dropdown.value, response_lang_dropdown.value
+        )
         toggle_config(False)
 
     config_window = ft.Container(
@@ -240,6 +272,11 @@ def main(page: ft.Page):
                 prompt_input,
                 in_dev_dropdown,
                 out_dev_dropdown,
+                wake_word_dropdown,
+                ai_provider_dropdown,
+                tts_engine_dropdown,
+                ui_lang_dropdown,
+                response_lang_dropdown,
             ], spacing=10, scroll=ft.ScrollMode.AUTO, expand=True),
             ft.ElevatedButton("SAVE CONFIG", on_click=save_and_close, bgcolor=CYAN, color="black", width=350, height=45)
         ], opacity=0, animate_opacity=300, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
@@ -256,20 +293,29 @@ def main(page: ft.Page):
     
     def render_message(role, text):
         is_user = role == 'user'
-        return ft.Row(
-            controls=[
-                ft.Container(
-                    content=ft.Text(text, color="white" if is_user else "#e0e0e0", size=13),
-                    bgcolor="#2b5278" if is_user else "#25252e",
-                    border_radius=ft.border_radius.only(
-                        top_left=15, top_right=15, 
-                        bottom_left=15 if is_user else 0, 
-                        bottom_right=0 if is_user else 15
-                    ),
-                    padding=12,
-                    width=250 # Использование ширины вместо constraints для фикса вылета
+        bubble = ft.Container(
+            content=ft.Text(text, color="white" if is_user else "#e0e0e0", size=13),
+            bgcolor="#2b5278" if is_user else "#25252e",
+            border_radius=ft.border_radius.only(
+                top_left=15, top_right=15,
+                bottom_left=15 if is_user else 0,
+                bottom_right=0 if is_user else 15
+            ),
+            padding=12,
+            width=250
+        )
+        controls = [bubble]
+        if not is_user:
+            controls.append(
+                ft.IconButton(
+                    icon=ft.Icons.VOLUME_UP_ROUNDED,
+                    icon_color=CYAN,
+                    tooltip="Озвучить / Speak",
+                    on_click=lambda _: threading.Thread(target=listen.speak, args=(text,), daemon=True).start()
                 )
-            ],
+            )
+        return ft.Row(
+            controls=controls,
             alignment=ft.MainAxisAlignment.END if is_user else ft.MainAxisAlignment.START,
         )
 
@@ -443,4 +489,4 @@ def main(page: ft.Page):
     page.update()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)
