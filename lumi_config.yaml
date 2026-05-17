@@ -1,0 +1,40 @@
+assistant:
+  name: "Lumi"
+  language: "ru-RU"
+  system_prompt: "Ты Lumi, дружелюбный голосовой AI-ассистент. Отвечай по-русски понятно и полезно."
+  history_limit: 12
+  log_dialog: true
+
+wake_word:
+  engine: "porcupine" # porcupine | openwakeword | snowboy | precise | vosk | console
+  keyword: "Люми"
+  model_path: "models/lumia.ppn"
+  access_key: ""
+
+vad:
+  enabled: true
+  engine: "silero-vad"
+  silence_timeout_sec: 1.2
+
+stt:
+  engine: "whisper" # whisper | whisper_cpp | vosk | google | azure
+  language: "ru"
+  model: "small"
+
+tts:
+  engine: "pyttsx3" # pyttsx3 | gtts | azure | elevenlabs | system
+  voice: ""
+  rate: 180
+  volume: 1.0
+
+llm:
+  provider: "ollama" # ollama | lmstudio | llama_cpp | openai | anthropic | yandexgpt | gigachat
+  endpoint: "http://localhost:11434"
+  api_key: ""
+  model: "llama3:8b"
+  temperature: 0.6
+  max_tokens: 512
+
+cache:
+  enabled: false
+  path: ".lumi_cache.json"
