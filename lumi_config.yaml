@@ -28,10 +28,9 @@ tts:
   volume: 1.0
 
 llm:
-  provider: "ollama" # ollama | lmstudio | llama_cpp | openai | anthropic | yandexgpt | gigachat
+  provider: "ollama"
   endpoint: "http://localhost:11434"
-  api_key: ""
-  model: "llama3:8b"
+  model: "qwen2.5-coder:7b"
   temperature: 0.6
   max_tokens: 512
 

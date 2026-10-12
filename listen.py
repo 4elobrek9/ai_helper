@@ -9,10 +9,9 @@ import requests
 import pygame
 import logging
 import sqlite3  # Добавлено для чтения конфига
+import desktop_agent
 from sintez import speak
-from command_OCR import move_to_text, click_to_text
 from command import get_weather
-import mistral_api
 
 # Настройка логгера
 logging.basicConfig(
@@ -64,70 +63,20 @@ def get_porcupine_key_from_db():
     except Exception as e:
         return None
 
-def ask_ollama(question: str, full_memory: list) -> str:
-    """Запрос к локальной Ollama с полным контекстом (hardmemory + system + history)"""
-    try:
-        # Строим prompt в стиле чата для llama3
-        prompt = ""
-        for msg in full_memory:
-            if msg['role'] == 'system':
-                prompt += f"[INST] {msg['content']} [/INST]\n"
-            elif msg['role'] == 'user':
-                prompt += f"[INST] {msg['content']} [/INST]\n"
-            elif msg['role'] == 'assistant':
-                prompt += f"{msg['content']}\n"
-        
-        prompt += f"[INST] {question} [/INST]"
-        
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "llama3:8b",
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "num_predict": 512
-                }
-            },
-            timeout=60
-        )
-        
-        if response.status_code != 200:
-            raise ConnectionError(f"HTTP {response.status_code}: {response.text}")
-        
-        result = response.json()
-        response_text = result.get("response", "").strip()
-        print(f"\n[Нейросеть Ollama] Ответ: {response_text}")
-        return response_text
-    except Exception as e:
-        logger.error(f"Ошибка запроса к Ollama: {e}")
-        return "Не удалось получить ответ от локальной нейросети"
-
 # --- Функция для текстового общения (используется в GUI) ---
 def process_text_query(text: str) -> str:
-    """Обрабатывает текстовый запрос без голосового вывода (для GUI чата)"""
+    """Обрабатывает чат- и компьютерные задачи только локальной Ollama."""
+    memory = [
+        {"role": item["role"], "content": item["content"]}
+        for item in load_memory()
+        if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+    ]
+    response_text = desktop_agent.run_agent_turn(
+        memory,
+        text,
+        system_prompt=get_system_prompt_from_db(),
+    )
     save_to_memory(text, 'user')
-    summarize_hardmemory()
-    
-    hard_memory = load_hardmemory()
-    memory = load_memory()
-    current_system_prompt = get_system_prompt_from_db()
-    
-    full_memory = hard_memory + [{'role': 'system', 'content': current_system_prompt}] + memory
-    
-    response_text = "..."
-    try:
-        response = mistral_api.chat_with_mistral(text, full_memory)
-        response_text = response['choices'][0]['message']['content'].strip()
-        logger.info("Mistral ответил в чат")
-    except Exception as e:
-        logger.warning(f"Mistral Error: {e}")
-        try:
-            response_text = ask_ollama(text, full_memory)
-        except:
-            response_text = "Ошибка: Нейросети недоступны."
-
     save_to_memory(response_text, 'assistant')
     summarize_hardmemory()
     return response_text
@@ -168,10 +117,6 @@ class VoiceAssistant:
         self.audio_stream = None 
         
         self.command_actions = {
-            "наведи на": self._handle_move,
-            "нажми на": self._handle_click,
-            "кликни на": self._handle_click,
-            "клик по": self._handle_click,
             "погода": self._weather,
             "стоп": self.stop,
             "выход": self.stop
@@ -286,36 +231,15 @@ class VoiceAssistant:
             logger.info(f"Отправка запроса нейросети: {text}")
             speak("Секунду, формулирую мысль")
             
-            save_to_memory(text, 'user')
-            summarize_hardmemory()
-            
-            hard_memory = load_hardmemory()
-            memory = load_memory()
-            current_system_prompt = get_system_prompt_from_db()
-            
-            full_memory = hard_memory + [{'role': 'system', 'content': current_system_prompt}] + memory
-            
-            response_text = None
-            
             try:
-                response = mistral_api.chat_with_mistral(text, full_memory)
-                response_text = response['choices'][0]['message']['content'].strip()
-                print(f"\n[Нейросеть Mistral] Ответ: {response_text}")
-                logger.info("Использована Mistral API (онлайн)")
-                
-            except Exception as e:
-                logger.warning(f"Ошибка Mistral API: {e}. Переход на локальную Ollama.")
-                try:
-                    response_text = ask_ollama(text, full_memory)
-                    logger.info("Использована локальная Ollama")
-                except Exception as ee:
-                    logger.error(f"Критическая ошибка Ollama: {ee}")
-                    response_text = "Извините, обе нейросети недоступны."
+                response_text = process_text_query(text)
+                logger.info("Использован локальный компьютерный агент Ollama")
+            except Exception:
+                logger.exception("Ошибка локального компьютерного агента")
+                response_text = "Не удалось выполнить запрос через локальную Ollama."
 
             if response_text and response_text.strip():
                 speak(response_text)
-                save_to_memory(response_text, 'assistant')
-                summarize_hardmemory()
             else:
                 speak("Не удалось получить ответ")
 

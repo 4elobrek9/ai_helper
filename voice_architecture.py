@@ -54,8 +54,7 @@ class AssistantConfig:
     llm: Dict[str, Any] = field(default_factory=lambda: {
         "provider": "ollama",
         "endpoint": "http://localhost:11434",
-        "api_key": "",
-        "model": "llama3:8b",
+        "model": "qwen2.5-coder:7b",
         "temperature": 0.6,
         "max_tokens": 512,
     })
@@ -190,27 +189,6 @@ class OllamaProvider(LLMProvider):
         return msg.get("content", "").strip() or "..."
 
 
-class OpenAICompatibleProvider(LLMProvider):
-    async def complete(self, history: List[Dict[str, str]], cfg: AssistantConfig) -> str:
-        llm = cfg.llm
-        headers = {"Authorization": f"Bearer {llm['api_key']}"}
-        payload = {
-            "model": llm["model"],
-            "messages": history,
-            "temperature": llm.get("temperature", 0.6),
-            "max_tokens": llm.get("max_tokens", 512),
-        }
-        endpoint = llm["endpoint"].rstrip("/") + "/v1/chat/completions"
-
-        def req():
-            r = requests.post(endpoint, headers=headers, json=payload, timeout=90)
-            r.raise_for_status()
-            return r.json()
-
-        data = await asyncio.to_thread(req)
-        return data["choices"][0]["message"]["content"].strip()
-
-
 class LumiVoiceLoop:
     def __init__(self, cfg_loader: ConfigLoader):
         self.cfg_loader = cfg_loader
@@ -240,8 +218,8 @@ class LumiVoiceLoop:
 
     def _build_llm_provider(self) -> LLMProvider:
         provider = self.cfg.llm.get("provider", "ollama").lower()
-        if provider in {"openai", "anthropic", "yandexgpt", "gigachat", "openai_compatible"}:
-            return OpenAICompatibleProvider()
+        if provider != "ollama":
+            raise ValueError("Lumi работает только с локальным провайдером Ollama.")
         return OllamaProvider()
 
     def _load_cache(self) -> Dict[str, str]:
