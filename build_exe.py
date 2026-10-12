@@ -3,18 +3,15 @@ import subprocess
 import os
 
 PROJECT_NAME = "AI_Helper"
-ENTRY_FILE = "gui.py"
+ENTRY_FILE = "GUI.py"
 
 ADD_DATA = [
     "audio;audio",
     "models;models",
-    "config.db;.",
-    "memory.json;.",
-    "hardmemory.json;.",
     "command.json;.",
     "requirements.txt;.",
-    "icon.png;.",
-    "app_icon.png;.",
+    "app_icon.ico;.",
+    "app_icon_window.png;.",
     "nerd_lst.mp3;.",
     "conf.mp3;.",
 ]
@@ -49,6 +46,9 @@ def build():
         "--clean",
         "--noconfirm",
         "--name", PROJECT_NAME,
+        "--icon", "app_icon.ico",
+        "--hidden-import", "omegaconf",
+        "--hidden-import", "antlr4",
     ]
 
     for item in ADD_DATA:
