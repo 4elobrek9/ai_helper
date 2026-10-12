@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 
+import desktop_agent
 from voice_architecture import ConfigLoader, LumiVoiceLoop
 
 
@@ -10,15 +11,20 @@ def cmd_show_config(path: str):
         print(f"[{section}] {getattr(cfg, section)}")
 
 
-async def cmd_chat(path: str):
+def cmd_chat(path: str):
     loader = ConfigLoader(path)
-    app = LumiVoiceLoop(loader)
+    cfg = loader.load()
+    history = []
     print("Lumi CLI ready. Type 'exit' to quit.")
     while True:
         text = input("you> ").strip()
         if text.lower() in {"exit", "quit"}:
             break
-        answer = await app.handle_text(text)
+        answer = desktop_agent.run_agent_turn(
+            history,
+            text,
+            system_prompt=cfg.assistant.get("system_prompt", ""),
+        )
         print(f"lumi> {answer}")
 
 
@@ -31,7 +37,7 @@ def main():
     if args.mode == "show-config":
         cmd_show_config(args.config)
     elif args.mode == "chat":
-        asyncio.run(cmd_chat(args.config))
+        cmd_chat(args.config)
     else:
         asyncio.run(LumiVoiceLoop(ConfigLoader(args.config)).run_forever())
 

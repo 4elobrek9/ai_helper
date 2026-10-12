@@ -1,18 +1,15 @@
 import sys
 import subprocess
-import os
 
 PROJECT_NAME = "AI_Helper"
-ENTRY_FILE = "gui.py"
+ENTRY_FILE = "GUI.py"
 
 ADD_DATA = [
     "audio;audio",
     "models;models",
-    "config.db;.",
-    "memory.json;.",
-    "hardmemory.json;.",
     "command.json;.",
     "requirements.txt;.",
+    "lumi_config.yaml;.",
     "icon.png;.",
     "app_icon.png;.",
     "nerd_lst.mp3;.",

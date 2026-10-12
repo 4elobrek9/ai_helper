@@ -86,7 +86,7 @@ def load_settings():
     conn.close()
     if row:
         return tuple("" if v is None else v for v in row)
-    return ("", "", None, None, "", "Porcupine", "Mistral API", "pyttsx3", "RU", "RU")
+    return ("", "", None, None, "", "Porcupine", "Ollama", "pyttsx3", "RU", "RU")
 
 def get_audio_devices(kind='input'):
     try:
@@ -108,9 +108,10 @@ except Exception:
     pass
 
 def main(page: ft.Page):
+    init_db()
+
     # --- 2. ПУТЬ К ИКОНКЕ ---
-    # Получаем полный абсолютный путь к файлу images.jpg в папке со скриптом
-    icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "images.jpg"))
+    icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "app_icon.png"))
 
     # --- 3. НАСТРОЙКА ТРЕЯ (Справа внизу) ---
     def quit_app(icon, item):
@@ -163,7 +164,7 @@ def main(page: ft.Page):
 
     # --- УСТАНОВКА ИКОНКИ ---
     # Указываем путь к иконке (используем абсолютный путь для надежности)
-    icon_path = os.path.join(os.path.dirname(__file__), "images.jpg")
+    icon_path = os.path.join(os.path.dirname(__file__), "app_icon.png")
     if os.path.exists(icon_path):
         page.window.icon = icon_path  # Это ставит иконку в окно и таскбар
     # -------------------------
@@ -244,14 +245,14 @@ def main(page: ft.Page):
                 time.sleep(0.5)
 
     # --- Элементы управления настройками ---
-    api_input = ft.TextField(label="MISTRAL API KEY", password=True, can_reveal_password=True, border_color="white24", value=saved_api, text_size=12)
+    api_input = ft.TextField(label="LOCAL OLLAMA (API key not required)", password=True, can_reveal_password=True, border_color="white24", value=saved_api, text_size=12, disabled=True)
     pv_key_input = ft.TextField(label="PORCUPINE KEY", password=True, can_reveal_password=True, border_color="white24", value=saved_pv_key, text_size=12)
     prompt_input = ft.TextField(label="SYSTEM PROMPT", multiline=True, min_lines=3, border_color="white24", value=saved_prompt, text_size=12)
     in_dev_dropdown = ft.Dropdown(label="INPUT (MIC)", options=[ft.dropdown.Option(d) for d in get_audio_devices('input')], border_color="white24", value=saved_in, text_size=12)
     out_dev_dropdown = ft.Dropdown(label="OUTPUT (SPEAKERS)", options=[ft.dropdown.Option(d) for d in get_audio_devices('output')], border_color="white24", value=saved_out, text_size=12)
     wake_word_dropdown = ft.Dropdown(label="WAKE WORD ENGINE", options=[ft.dropdown.Option(d) for d in ["Porcupine", "openWakeWord", "Snowboy", "Mycroft Precise", "Vosk Keyword"]], border_color="white24", value=saved_wake or "Porcupine", text_size=12)
-    ai_provider_dropdown = ft.Dropdown(label="AI PROVIDER", options=[ft.dropdown.Option(d) for d in ["Mistral API", "Ollama", "OpenAI", "Anthropic", "YandexGPT", "GigaChat", "g4f"]], border_color="white24", value=saved_ai or "Mistral API", text_size=12)
-    tts_engine_dropdown = ft.Dropdown(label="TTS ENGINE", options=[ft.dropdown.Option(d) for d in ["pyttsx3", "gTTS", "Azure TTS", "ElevenLabs", "System TTS"]], border_color="white24", value=saved_tts or "pyttsx3", text_size=12)
+    ai_provider_dropdown = ft.Dropdown(label="AI PROVIDER (LOCAL)", options=[ft.dropdown.Option("Ollama")], border_color="white24", value="Ollama", text_size=12, disabled=True)
+    tts_engine_dropdown = ft.Dropdown(label="TTS ENGINE (LOCAL)", options=[ft.dropdown.Option("pyttsx3")], border_color="white24", value="pyttsx3", text_size=12, disabled=True)
     ui_lang_dropdown = ft.Dropdown(label="UI LANGUAGE", options=[ft.dropdown.Option(d) for d in ["RU", "EN"]], border_color="white24", value=saved_ui_lang or "RU", text_size=12)
     response_lang_dropdown = ft.Dropdown(label="AI RESPONSE LANGUAGE", options=[ft.dropdown.Option(d) for d in ["RU", "EN"]], border_color="white24", value=saved_rsp_lang or "RU", text_size=12)
 
@@ -489,4 +490,4 @@ def main(page: ft.Page):
     page.update()
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.app(target=main)
