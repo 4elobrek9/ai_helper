@@ -7,9 +7,19 @@ import time
 import threading
 import listen 
 from listen import VoiceAssistant, process_text_query, load_memory
+from sintez import set_voice
 import ctypes
+import logging
 from PIL import Image
 import pystray
+from app_paths import data_path, resource_path
+from ollama_models import (
+    AUTO_MODEL,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_VISION_MODEL,
+    list_models,
+    start_model_download,
+)
 
 # ЗАМЕТКИ ДЛЯ БУДУЩЕГО: 
 # Дизайн: Living Shard, 400x600. 
@@ -18,7 +28,7 @@ import pystray
 # БД: Авто-миграция и сохранение/загрузка настроек (API, Prompt, Devices, Porcupine).
 
 def init_db():
-    conn = sqlite3.connect("config.db")
+    conn = sqlite3.connect(data_path("config.db"))
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -32,7 +42,10 @@ def init_db():
             ai_provider TEXT,
             tts_engine TEXT,
             ui_language TEXT,
-            response_language TEXT
+            response_language TEXT,
+            ollama_chat_model TEXT,
+            ollama_vision_model TEXT,
+            screen_monitor TEXT
         )
     """)
     # Проверка и добавление колонок для старых баз данных
@@ -54,30 +67,48 @@ def init_db():
         cursor.execute("ALTER TABLE settings ADD COLUMN ui_language TEXT")
     if "response_language" not in columns:
         cursor.execute("ALTER TABLE settings ADD COLUMN response_language TEXT")
+    if "ollama_chat_model" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN ollama_chat_model TEXT")
+    if "ollama_vision_model" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN ollama_vision_model TEXT")
+    if "screen_monitor" not in columns:
+        cursor.execute("ALTER TABLE settings ADD COLUMN screen_monitor TEXT")
     conn.commit()
     conn.close()
 
-def save_settings(api_key, prompt, input_dev, output_dev, porcupine_key, wake_word_engine, ai_provider, tts_engine, ui_language, response_language):
-    conn = sqlite3.connect("config.db")
+def save_settings(
+    api_key, prompt, input_dev, output_dev, porcupine_key, wake_word_engine,
+    ai_provider, tts_engine, ui_language, response_language,
+    ollama_chat_model, ollama_vision_model, screen_monitor,
+):
+    conn = sqlite3.connect(data_path("config.db"))
     cursor = conn.cursor()
     cursor.execute("DELETE FROM settings")
     cursor.execute(
         """INSERT INTO settings (
             api_key, prompt, input_device, output_device, porcupine_key,
-            wake_word_engine, ai_provider, tts_engine, ui_language, response_language
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (api_key, prompt, input_dev, output_dev, porcupine_key, wake_word_engine, ai_provider, tts_engine, ui_language, response_language)
+            wake_word_engine, ai_provider, tts_engine, ui_language, response_language,
+            ollama_chat_model, ollama_vision_model, screen_monitor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            api_key, prompt, input_dev, output_dev, porcupine_key,
+            wake_word_engine, ai_provider, tts_engine, ui_language,
+            response_language, ollama_chat_model, ollama_vision_model,
+            screen_monitor,
+        )
     )
     conn.commit()
     conn.close()
 
 def load_settings():
-    conn = sqlite3.connect("config.db")
+    conn = sqlite3.connect(data_path("config.db"))
     cursor = conn.cursor()
     try:
         cursor.execute(
             """SELECT api_key, prompt, input_device, output_device, porcupine_key,
-                      wake_word_engine, ai_provider, tts_engine, ui_language, response_language
+                      wake_word_engine, ai_provider, tts_engine, ui_language,
+                      response_language,
+                      ollama_chat_model, ollama_vision_model, screen_monitor
                FROM settings LIMIT 1"""
         )
         row = cursor.fetchone()
@@ -86,7 +117,8 @@ def load_settings():
     conn.close()
     if row:
         return tuple("" if v is None else v for v in row)
-    return ("", "", None, None, "", "Porcupine", "Mistral API", "pyttsx3", "RU", "RU")
+    return ("", "", None, None, "", "Ручной режим без ключа", "Ollama (локально)",
+            "Silero (Ксения)", "RU", "RU", AUTO_MODEL, AUTO_MODEL, "")
 
 def get_audio_devices(kind='input'):
     try:
@@ -107,14 +139,30 @@ try:
 except Exception:
     pass
 
+
+def handle_window_event(page, event):
+    if event.data == "close":
+        logging.info("Окно скрывается в системный трей")
+        page.window.visible = False
+        page.update()
+    elif event.data == "minimize":
+        page.window.visible = False
+        page.update()
+    elif event.data == "restore":
+        page.window.visible = True
+        page.update()
+
+
 def main(page: ft.Page):
-    # --- 2. ПУТЬ К ИКОНКЕ ---
-    # Получаем полный абсолютный путь к файлу images.jpg в папке со скриптом
-    icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "images.jpg"))
+    init_db()
+    icon_path = str(resource_path("app_icon.ico"))
 
     # --- 3. НАСТРОЙКА ТРЕЯ (Справа внизу) ---
     def quit_app(icon, item):
         icon.stop()
+        if voice_assistant_instance is not None:
+            voice_assistant_instance.stop()
+        page.window.prevent_close = False
         page.window.destroy()
 
     def show_app(icon, item):
@@ -124,36 +172,36 @@ def main(page: ft.Page):
         page.window.to_front()
 
     def setup_tray():
-        if os.path.exists(icon_path):
-            img = Image.open(icon_path)
-            menu = pystray.Menu(
-                pystray.MenuItem("Развернуть LUMI", show_app, default=True),
-                pystray.MenuItem("Выход", quit_app)
-            )
-            tray = pystray.Icon("LUMI AI", img, "LUMI AI", menu)
-            tray.run()
+        if not os.path.exists(icon_path):
+            raise FileNotFoundError(f"Не найден файл иконки приложения: {icon_path}")
+        img = Image.open(icon_path)
+        menu = pystray.Menu(
+            pystray.MenuItem("Развернуть LUMI", show_app, default=True),
+            pystray.MenuItem("Выход", quit_app)
+        )
+        tray = pystray.Icon("LUMI AI", img, "LUMI AI", menu)
+        tray.run()
 
     # Сразу запускаем трей в отдельном потоке
-    threading.Thread(target=setup_tray, daemon=True).start()
+    def start_tray():
+        try:
+            setup_tray()
+        except Exception:
+            logging.exception("Не удалось запустить значок LUMI в системном трее")
+
+    threading.Thread(target=start_tray, daemon=True).start()
 
     # --- 4. ЛОГИКА СВОРАЧИВАНИЯ В ТРЕЙ ---
     def on_window_event(e):
-        if e.data == "minimize":
-            # Скрываем окно совсем (оно исчезает из панели задач, остается в трее)
-            page.window.visible = False
-            page.update()
-        elif e.data == "restore":
-            page.window.visible = True
-            page.update()
+        handle_window_event(page, e)
 
     page.on_window_event = on_window_event
 
     # --- Конфигурация окна ---
     page.title = "LUMI AI"
-    
-    # ПРИНУДИТЕЛЬНАЯ УСТАНОВКА ИКОНКИ ОКНА
+    page.window.prevent_close = True
     if os.path.exists(icon_path):
-        page.window.icon = icon_path  # Для самого окна
+        page.window.icon = icon_path
     
     page.window.width = 400
     page.window.height = 600
@@ -161,13 +209,6 @@ def main(page: ft.Page):
     page.window.maximizable = False
     page.window.always_on_top = True
 
-    # --- УСТАНОВКА ИКОНКИ ---
-    # Указываем путь к иконке (используем абсолютный путь для надежности)
-    icon_path = os.path.join(os.path.dirname(__file__), "images.jpg")
-    if os.path.exists(icon_path):
-        page.window.icon = icon_path  # Это ставит иконку в окно и таскбар
-    # -------------------------
-    
     try:
         if hasattr(page.window, "center"):
             page.run_task(page.window.center)
@@ -192,7 +233,12 @@ def main(page: ft.Page):
         "running": True
     }
 
-    saved_api, saved_prompt, saved_in, saved_out, saved_pv_key, saved_wake, saved_ai, saved_tts, saved_ui_lang, saved_rsp_lang = load_settings()
+    (
+        saved_api, saved_prompt, saved_in, saved_out, saved_pv_key, saved_wake,
+        saved_ai, saved_tts, saved_ui_lang, saved_rsp_lang,
+        saved_chat_model, saved_vision_model, saved_monitor,
+    ) = load_settings()
+    set_voice(saved_tts)
 
     # --- Слой анимации (Волны) ---
     class WaveCircle(ft.Container):
@@ -249,17 +295,126 @@ def main(page: ft.Page):
     prompt_input = ft.TextField(label="SYSTEM PROMPT", multiline=True, min_lines=3, border_color="white24", value=saved_prompt, text_size=12)
     in_dev_dropdown = ft.Dropdown(label="INPUT (MIC)", options=[ft.dropdown.Option(d) for d in get_audio_devices('input')], border_color="white24", value=saved_in, text_size=12)
     out_dev_dropdown = ft.Dropdown(label="OUTPUT (SPEAKERS)", options=[ft.dropdown.Option(d) for d in get_audio_devices('output')], border_color="white24", value=saved_out, text_size=12)
-    wake_word_dropdown = ft.Dropdown(label="WAKE WORD ENGINE", options=[ft.dropdown.Option(d) for d in ["Porcupine", "openWakeWord", "Snowboy", "Mycroft Precise", "Vosk Keyword"]], border_color="white24", value=saved_wake or "Porcupine", text_size=12)
-    ai_provider_dropdown = ft.Dropdown(label="AI PROVIDER", options=[ft.dropdown.Option(d) for d in ["Mistral API", "Ollama", "OpenAI", "Anthropic", "YandexGPT", "GigaChat", "g4f"]], border_color="white24", value=saved_ai or "Mistral API", text_size=12)
-    tts_engine_dropdown = ft.Dropdown(label="TTS ENGINE", options=[ft.dropdown.Option(d) for d in ["pyttsx3", "gTTS", "Azure TTS", "ElevenLabs", "System TTS"]], border_color="white24", value=saved_tts or "pyttsx3", text_size=12)
+    wake_word_dropdown = ft.Dropdown(label="АКТИВАЦИЯ ГОЛОСА", options=[ft.dropdown.Option(d) for d in ["Ручной режим без ключа", "Porcupine"]], border_color="white24", value=saved_wake or "Ручной режим без ключа", text_size=12)
+    ai_options = ["Ollama (локально)", "Mistral API"]
+    selected_ai = saved_ai if saved_ai in ai_options else "Ollama (локально)"
+    ai_provider_dropdown = ft.Dropdown(label="AI PROVIDER", options=[ft.dropdown.Option(d) for d in ai_options], border_color="white24", value=selected_ai, text_size=12)
+    chat_model_dropdown = ft.Dropdown(
+        label="МОДЕЛЬ ДЛЯ ЧАТА",
+        options=[ft.dropdown.Option(AUTO_MODEL), ft.dropdown.Option(saved_chat_model)]
+        if saved_chat_model and saved_chat_model != AUTO_MODEL
+        else [ft.dropdown.Option(AUTO_MODEL)],
+        value=saved_chat_model or AUTO_MODEL,
+        border_color="white24",
+        text_size=12,
+    )
+    vision_model_dropdown = ft.Dropdown(
+        label="VISION-МОДЕЛЬ ДЛЯ АНАЛИЗА ЭКРАНА",
+        options=[ft.dropdown.Option(AUTO_MODEL), ft.dropdown.Option(saved_vision_model)]
+        if saved_vision_model and saved_vision_model != AUTO_MODEL
+        else [ft.dropdown.Option(AUTO_MODEL)],
+        value=saved_vision_model or AUTO_MODEL,
+        border_color="white24",
+        text_size=12,
+    )
+    chat_download_input = ft.TextField(
+        label="Скачать модель для чата",
+        value=DEFAULT_CHAT_MODEL,
+        border_color="white24",
+        text_size=12,
+    )
+    vision_download_input = ft.TextField(
+        label="Скачать модель с поддержкой изображений",
+        value=DEFAULT_VISION_MODEL,
+        border_color="white24",
+        text_size=12,
+    )
+    tts_options = ["Silero (Ксения)", "Системный женский голос"]
+    tts_engine_dropdown = ft.Dropdown(
+        label="ГОЛОС ОТВЕТА",
+        options=[ft.dropdown.Option(value) for value in tts_options],
+        border_color="white24",
+        value=saved_tts if saved_tts in tts_options else tts_options[0],
+        text_size=12,
+    )
     ui_lang_dropdown = ft.Dropdown(label="UI LANGUAGE", options=[ft.dropdown.Option(d) for d in ["RU", "EN"]], border_color="white24", value=saved_ui_lang or "RU", text_size=12)
     response_lang_dropdown = ft.Dropdown(label="AI RESPONSE LANGUAGE", options=[ft.dropdown.Option(d) for d in ["RU", "EN"]], border_color="white24", value=saved_rsp_lang or "RU", text_size=12)
+    from command_OCR import get_monitors
+    available_monitors = get_monitors()
+    primary_monitor = next(
+        (monitor for monitor in available_monitors if monitor["is_primary"]),
+        available_monitors[0] if available_monitors else {"index": 1, "label": "Экран 1"},
+    )
+    screen_monitor_dropdown = ft.Dropdown(
+        label="ЭКРАН ДЛЯ АНАЛИЗА И УПРАВЛЕНИЯ",
+        options=[
+            ft.dropdown.Option(
+                key=str(monitor["index"]),
+                text=monitor["label"],
+            )
+            for monitor in available_monitors
+        ] or [ft.dropdown.Option(key="1", text="Экран 1")],
+        value=(
+            saved_monitor
+            if saved_monitor in {str(monitor["index"]) for monitor in available_monitors}
+            else str(primary_monitor["index"])
+        ),
+        border_color="white24",
+        text_size=12,
+    )
+
+    def show_config_message(message):
+        page.snack_bar = ft.SnackBar(content=ft.Text(message))
+        page.snack_bar.open = True
+        page.update()
+
+    def refresh_ollama_models(e=None):
+        try:
+            chat_models, vision_models = list_models(refresh=True)
+        except Exception as error:
+            show_config_message(f"Не удалось получить модели Ollama: {error}")
+            return
+
+        chat_model_dropdown.options = [
+            ft.dropdown.Option(AUTO_MODEL),
+            *[ft.dropdown.Option(model) for model in chat_models],
+        ]
+        vision_model_dropdown.options = [
+            ft.dropdown.Option(AUTO_MODEL),
+            *[ft.dropdown.Option(model) for model in vision_models],
+        ]
+        if chat_model_dropdown.value not in [AUTO_MODEL, *chat_models]:
+            chat_model_dropdown.value = AUTO_MODEL
+        if vision_model_dropdown.value not in [AUTO_MODEL, *vision_models]:
+            vision_model_dropdown.value = AUTO_MODEL
+        chat_model_dropdown.update()
+        vision_model_dropdown.update()
+        show_config_message(
+            f"Найдено моделей: {len(chat_models)} для чата, "
+            f"{len(vision_models)} с vision."
+        )
+
+    def download_ollama_model(model_input):
+        model_name = (model_input.value or "").strip()
+        try:
+            start_model_download(model_name)
+        except (ValueError, OSError) as error:
+            show_config_message(f"Не удалось запустить загрузку модели: {error}")
+            return
+        show_config_message(
+            f"Загрузка {model_name} открыта в отдельном окне CMD. "
+            "После завершения нажмите «Обновить модели»."
+        )
 
     def save_and_close(e):
         save_settings(
             api_input.value, prompt_input.value, in_dev_dropdown.value, out_dev_dropdown.value, pv_key_input.value,
-            wake_word_dropdown.value, ai_provider_dropdown.value, tts_engine_dropdown.value, ui_lang_dropdown.value, response_lang_dropdown.value
+            wake_word_dropdown.value, ai_provider_dropdown.value, tts_engine_dropdown.value,
+            ui_lang_dropdown.value, response_lang_dropdown.value,
+            chat_model_dropdown.value or AUTO_MODEL, vision_model_dropdown.value or AUTO_MODEL,
+            screen_monitor_dropdown.value or str(primary_monitor["index"]),
         )
+        set_voice(tts_engine_dropdown.value)
         toggle_config(False)
 
     config_window = ft.Container(
@@ -274,6 +429,35 @@ def main(page: ft.Page):
                 out_dev_dropdown,
                 wake_word_dropdown,
                 ai_provider_dropdown,
+                chat_model_dropdown,
+                vision_model_dropdown,
+                ft.Text(
+                    "«Авто» выбирает установленную модель. Vision-модель используется "
+                    "только для анализа изображения экрана.",
+                    size=11,
+                    color="white54",
+                ),
+                ft.Row([
+                    chat_download_input,
+                    ft.IconButton(
+                        icon=ft.Icons.DOWNLOAD,
+                        tooltip="Скачать модель в отдельном CMD",
+                        on_click=lambda _: download_ollama_model(chat_download_input),
+                    ),
+                ]),
+                ft.Row([
+                    vision_download_input,
+                    ft.IconButton(
+                        icon=ft.Icons.DOWNLOAD,
+                        tooltip="Скачать vision-модель в отдельном CMD",
+                        on_click=lambda _: download_ollama_model(vision_download_input),
+                    ),
+                ]),
+                ft.OutlinedButton(
+                    "Обновить список моделей Ollama",
+                    on_click=refresh_ollama_models,
+                ),
+                screen_monitor_dropdown,
                 tts_engine_dropdown,
                 ui_lang_dropdown,
                 response_lang_dropdown,
@@ -290,11 +474,13 @@ def main(page: ft.Page):
     # --- Элементы управления чатом ---
     chat_list = ft.Column(spacing=15, scroll=ft.ScrollMode.AUTO, expand=True)
     chat_input = ft.TextField(hint_text="Напишите сообщение...", expand=True, border_color="white24", text_size=14, color="white", on_submit=lambda e: send_chat_message(e))
+    voice_stream_state = {"assistant_text": None}
     
     def render_message(role, text):
         is_user = role == 'user'
+        message_text = ft.Text(text, color="white" if is_user else "#e0e0e0", size=13)
         bubble = ft.Container(
-            content=ft.Text(text, color="white" if is_user else "#e0e0e0", size=13),
+            content=message_text,
             bgcolor="#2b5278" if is_user else "#25252e",
             border_radius=ft.border_radius.only(
                 top_left=15, top_right=15,
@@ -311,7 +497,7 @@ def main(page: ft.Page):
                     icon=ft.Icons.VOLUME_UP_ROUNDED,
                     icon_color=CYAN,
                     tooltip="Озвучить / Speak",
-                    on_click=lambda _: threading.Thread(target=listen.speak, args=(text,), daemon=True).start()
+                    on_click=lambda _: listen.speak(message_text.value)
                 )
             )
         return ft.Row(
@@ -326,8 +512,29 @@ def main(page: ft.Page):
             chat_list.controls.append(render_message(msg['role'], msg['content']))
         chat_list.update()
 
-    def send_chat_message(e):
-        text = chat_input.value
+    def show_voice_user_message(text):
+        chat_list.controls.append(render_message("user", text))
+        assistant_message = render_message("assistant", "")
+        chat_list.controls.append(assistant_message)
+        voice_stream_state["assistant_text"] = assistant_message.controls[0].content
+        chat_list.update()
+
+    def show_voice_response_chunk(chunk):
+        assistant_text = voice_stream_state["assistant_text"]
+        if assistant_text is None:
+            return
+        assistant_text.value += chunk
+        chat_list.update()
+
+    def finish_voice_response(response):
+        assistant_text = voice_stream_state["assistant_text"]
+        if assistant_text is not None:
+            assistant_text.value = response
+            voice_stream_state["assistant_text"] = None
+            chat_list.update()
+
+    def send_chat_message(e, inspect_screen=False):
+        text = "Что сейчас отображено на экране?" if inspect_screen else chat_input.value
         if not text: return
         
         chat_list.controls.append(render_message('user', text))
@@ -336,15 +543,40 @@ def main(page: ft.Page):
         chat_list.update()
 
         def get_ai_response():
-            # Заглушка ожидания
             typing_indicator = ft.Row([ft.Text("Люми думает...", size=10, color="white54")], alignment="start")
             chat_list.controls.append(typing_indicator)
             chat_list.update()
 
-            response = process_text_query(text)
-            
-            chat_list.controls.remove(typing_indicator)
-            chat_list.controls.append(render_message('assistant', response))
+            try:
+                screen_image = None
+                if inspect_screen:
+                    from command_OCR import get_screen_image
+                    screen_image = get_screen_image()
+                assistant_message = render_message("assistant", "")
+                chat_list.controls.remove(typing_indicator)
+                chat_list.controls.append(assistant_message)
+                assistant_text = assistant_message.controls[0].content
+                streamed_parts = []
+
+                def append_response_chunk(chunk):
+                    streamed_parts.append(chunk)
+                    assistant_text.value += chunk
+                    chat_list.update()
+
+                response = process_text_query(
+                    text,
+                    screen_image=screen_image,
+                    on_delta=append_response_chunk,
+                )
+                if not streamed_parts:
+                    assistant_text.value = response
+                elif "".join(streamed_parts) != response:
+                    assistant_text.value = response
+            except Exception as error:
+                response = f"Не удалось прочитать экран: {error}"
+                if typing_indicator in chat_list.controls:
+                    chat_list.controls.remove(typing_indicator)
+                    chat_list.controls.append(render_message("assistant", response))
             chat_list.update()
 
         threading.Thread(target=get_ai_response, daemon=True).start()
@@ -358,6 +590,12 @@ def main(page: ft.Page):
             chat_list,
             ft.Row([
                 chat_input,
+                ft.IconButton(
+                    icon=ft.Icons.VISIBILITY,
+                    icon_color=CYAN,
+                    tooltip="Спросить об экране",
+                    on_click=lambda e: send_chat_message(e, inspect_screen=True),
+                ),
                 ft.IconButton(ft.Icons.SEND_ROUNDED, icon_color=CYAN, on_click=send_chat_message)
             ], alignment="center")
         ], opacity=0, animate_opacity=300),
@@ -402,6 +640,20 @@ def main(page: ft.Page):
     btn_chat = ft.Container(content=ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINED, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0, on_click=lambda _: toggle_chat(True))
     btn_tools = ft.Container(content=ft.Icon(ft.Icons.AUTO_FIX_HIGH, color="white"), width=60, height=60, bgcolor="white10", border_radius=15, blur=10, animate_position=ANIM_SPEED, top=CENTER_Y+10, left=CENTER_X+10, scale=0, tooltip="MODS (Dev)")
     
+    def start_voice_assistant(assistant):
+        global voice_assistant_instance
+        try:
+            assistant.start()
+        except Exception:
+            logging.exception("Не удалось запустить голосовой ввод")
+            assistant.stop()
+            state["is_voice_active"] = False
+            if voice_assistant_instance is assistant:
+                voice_assistant_instance = None
+            btn_mic.content.color = "white"
+            btn_mic.bgcolor = "white10"
+            page.update()
+
     def toggle_mic_state(e):
         global voice_assistant_instance
         state["is_voice_active"] = not state["is_voice_active"]
@@ -411,9 +663,26 @@ def main(page: ft.Page):
         btn_mic.update()
 
         if state["is_voice_active"]:
-            if voice_assistant_instance is None:
-                voice_assistant_instance = VoiceAssistant()
-            threading.Thread(target=voice_assistant_instance.start, daemon=True).start()
+            try:
+                if voice_assistant_instance is None:
+                    voice_assistant_instance = VoiceAssistant(
+                        input_device=in_dev_dropdown.value,
+                        on_user_text=show_voice_user_message,
+                        on_response_chunk=show_voice_response_chunk,
+                        on_response_complete=finish_voice_response,
+                    )
+                threading.Thread(
+                    target=start_voice_assistant,
+                    args=(voice_assistant_instance,),
+                    daemon=True,
+                ).start()
+            except Exception:
+                logging.exception("Не удалось инициализировать голосовой ввод")
+                state["is_voice_active"] = False
+                voice_assistant_instance = None
+                btn_mic.content.color = "white"
+                btn_mic.bgcolor = "white10"
+                btn_mic.update()
         else:
             if voice_assistant_instance:
                 voice_assistant_instance.stop()
@@ -489,4 +758,4 @@ def main(page: ft.Page):
     page.update()
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.app(target=main)

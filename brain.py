@@ -1,7 +1,6 @@
 # ai_test.py
 import requests
 import logging
-from g4f.client import Client  # Резервный вариант
 from sintez import *
 
 # Настройка логгера
