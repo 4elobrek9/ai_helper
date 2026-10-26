@@ -1,66 +1,66 @@
-import sys
-import subprocess
-import os
+"""Сборка LUMI AI в отдельный EXE-файл через PyInstaller."""
 
-PROJECT_NAME = "AI_Helper"
-ENTRY_FILE = "gui.py"
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_NAME = "LUMI AI"
+ENTRY_MODULE = "lumi.__main__"
+ICON_FILE = "assets/icon.png"
 
 ADD_DATA = [
-    "audio;audio",
-    "models;models",
-    "config.db;.",
-    "memory.json;.",
-    "hardmemory.json;.",
-    "command.json;.",
-    "requirements.txt;.",
-    "icon.png;.",
-    "app_icon.png;.",
-    "nerd_lst.mp3;.",
-    "conf.mp3;.",
+    ("audio", "audio"),
+    ("models", "models"),
+    ("lumi_config.yaml", "."),
+    ("command.json", "."),
+    ("icon.png", "."),
+    ("app_icon.png", "."),
 ]
 
-def run(cmd):
-    subprocess.check_call(cmd, shell=False)
 
-def ensure_clean_env():
-    # УДАЛЯЕМ ВРЕДНЫЙ pathlib
-    try:
-        import pathlib  # noqa
-        print("⚠ Найден pip-пакет pathlib — удаляю")
-        run([sys.executable, "-m", "pip", "uninstall", "-y", "pathlib"])
-    except Exception:
-        pass
+def run(cmd: list[str]) -> None:
+    subprocess.check_call(cmd)
 
-def ensure_pyinstaller():
+
+def ensure_pyinstaller() -> None:
     try:
-        import PyInstaller  # noqa
+        import PyInstaller  # noqa: F401
     except ImportError:
-        print("📦 Устанавливаю PyInstaller")
+        print("📦 Установка PyInstaller...")
         run([sys.executable, "-m", "pip", "install", "--upgrade", "pyinstaller"])
 
-def build():
-    ensure_clean_env()
+
+def build() -> None:
     ensure_pyinstaller()
 
     cmd = [
-        sys.executable, "-m", "PyInstaller",
+        sys.executable,
+        "-m",
+        "PyInstaller",
         "--onefile",
         "--windowed",
         "--clean",
         "--noconfirm",
-        "--name", PROJECT_NAME,
+        "--name",
+        PROJECT_NAME,
     ]
 
-    for item in ADD_DATA:
-        cmd.extend(["--add-data", item])
+    if Path(ICON_FILE).exists():
+        cmd.extend(["--icon", ICON_FILE])
 
-    cmd.append(ENTRY_FILE)
+    for src, dst in ADD_DATA:
+        src_path = Path(src)
+        if src_path.exists():
+            cmd.extend(["--add-data", f"{src};{dst}"])
 
-    print("▶ Сборка exe...")
+    cmd.append(ENTRY_MODULE)
+
+    print("▶ Сборка EXE...")
     run(cmd)
 
     print("\n✅ ГОТОВО")
     print(f"📦 dist/{PROJECT_NAME}.exe")
+
 
 if __name__ == "__main__":
     build()

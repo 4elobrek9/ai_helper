@@ -1,15 +1,73 @@
-# venv
+# Виртуальное окружение
+.venv/
+venv/
+ENV/
+env/
 .venv
-.env
-venv
 
-# files
-*.log
-vosk-model-en-us-0.22
-pip
-Lib
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+var/
+sdist/
+dist-info/
+*.egg-info/
+*.egg
+
+# Локальные данные и БД
 *.db
+*.sqlite
+*.sqlite3
 *.json
+memory.json
+hardmemory.json
+config.db
 
-# python
-__pycache__
+# Логи
+*.log
+logs/
+
+# Модели (большие файлы)
+*.ppn
+*.onnx
+*.pth
+*.bin
+models/
+*.model
+
+# Окружение
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные файлы
+*.tmp
+*.temp
+*.bak
+
+# Локальные ресурсы TTS/STT
+*.wav
+*.mp3
+audio/*.wav
+audio/*.mp3

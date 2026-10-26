@@ -1,0 +1,1 @@
+"""Голосовой слой: STT (faster-whisper), TTS (Silero), wake-word."""

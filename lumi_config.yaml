@@ -1,12 +1,12 @@
 assistant:
   name: "Lumi"
   language: "ru-RU"
-  system_prompt: "Ты Lumi, дружелюбный голосовой AI-ассистент. Отвечай по-русски понятно и полезно."
+  system_prompt: "Ты Lumi, дружелюбный голосовой AI-ассистент. Отвечай по-русски понятно и полезно. Ты можешь управлять компьютером пользователя через специальные инструменты. Если пользователь просит что-то сделать с компьютером (открыть приложение, прочитать файл, сделать скриншот, найти текст на экране и т.д.), используй соответствующий инструмент. Все действия локальные и безопасные."
   history_limit: 12
   log_dialog: true
 
 wake_word:
-  engine: "porcupine" # porcupine | openwakeword | snowboy | precise | vosk | console
+  engine: "console"
   keyword: "Люми"
   model_path: "models/lumia.ppn"
   access_key: ""
@@ -17,24 +17,54 @@ vad:
   silence_timeout_sec: 1.2
 
 stt:
-  engine: "whisper" # whisper | whisper_cpp | vosk | google | azure
+  engine: "faster-whisper"
   language: "ru"
   model: "small"
+  device: "cpu"
+  compute_type: "int8"
 
 tts:
-  engine: "pyttsx3" # pyttsx3 | gtts | azure | elevenlabs | system
-  voice: ""
-  rate: 180
+  engine: "silero"
+  voice: "xenia"
+  rate: 1.0
   volume: 1.0
+  sample_rate: 48000
 
 llm:
-  provider: "ollama" # ollama | lmstudio | llama_cpp | openai | anthropic | yandexgpt | gigachat
+  provider: "ollama"
   endpoint: "http://localhost:11434"
   api_key: ""
   model: "llama3:8b"
   temperature: 0.6
   max_tokens: 512
+  fallback: "mistral"
 
-cache:
-  enabled: false
-  path: ".lumi_cache.json"
+desktop:
+  safe_mode: false
+  confirm_dangerous: true
+  allowed_apps:
+    - notepad
+    - calc
+    - mspaint
+    - chrome
+    - firefox
+    - edge
+    - explorer
+    - cmd
+    - powershell
+  allowed_folders: []
+
+memory:
+  enabled: true
+  summarize_threshold: 20
+  max_history: 50
+
+gui:
+  theme: "dark"
+  accent_color: "#00D4FF"
+  window_width: 400
+  window_height: 600
+
+auto_discovery:
+  enabled: true          # Автоопределение локальных ИИ (Ollama, LM Studio)
+  ollama_port: 11434    # Порт Ollama по умолчанию

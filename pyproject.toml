@@ -1,0 +1,52 @@
+[project]
+name = "lumi-ai"
+version = "0.1.0"
+description = "LUMI AI — локальный голосовой ассистент на базе Ollama, faster-whisper, Silero TTS и desktop-tools"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "LUMI AI Team"}]
+license = {text = "MIT"}
+
+[project.dependencies]
+flet = ">=0.20.0"
+pyyaml = ">=6.0.2"
+requests = ">=2.31.0"
+faster-whisper = ">=1.0.0"
+silero-tts = ">=0.1.0"
+easyocr = ">=1.7.0"
+mss = ">=9.0.1"
+pyautogui = ">=0.9.55"
+pywin32 = ">=306"
+pystray = ">=0.19.0"
+Pillow = ">=10.0.0"
+numpy = ">=1.26.0"
+sounddevice = ">=0.4.6"
+pyperclip = ">=1.8.2"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5.0",
+    "black>=24.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+build = [
+    "PyInstaller>=6.0.0",
+]
+
+[project.scripts]
+lumi = "lumi.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "B", "C4", "UP"]
+ignore = ["E501", "B008"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
