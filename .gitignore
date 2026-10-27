@@ -1,0 +1,18 @@
+# venv
+.venv
+.venv311
+.env
+venv
+
+# files
+*.log
+vosk-model-en-us-0.22
+pip
+Lib
+*.db
+*.json
+log/
+MODS/
+
+# python
+__pycache__
